@@ -206,17 +206,19 @@ export async function redeemReferral(code: string): Promise<{ ok: boolean; error
 
 export async function globalBoard(limit = 50): Promise<LeaderRow[]> {
   if (await isLive()) {
-    const { data, error } = await supabase!
-      .from('leaderboard_global')
-      .select('user_id, handle, level, xp')
-      .order('xp', { ascending: false })
-      .limit(limit);
+    // A definer FUNCTION since 0013, not a view: rows arrive already ranked
+    // on season_xp, so the client neither sorts nor could get it wrong. The
+    // old view branch selected a column named `xp` that has not existed
+    // since 0003, so this path returned [] on the one day it went live.
+    const { data, error } = await supabase!.rpc('leaderboard_global', {
+      p_limit: limit,
+    });
     if (error || !data) return [];
-    return data.map((r: any) => ({
+    return (data as any[]).map((r) => ({
       id: r.user_id,
       handle: r.handle,
       level: r.level,
-      xp: r.xp,
+      xp: r.season_xp,
     }));
   }
   return [];

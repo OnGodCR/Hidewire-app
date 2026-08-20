@@ -3,3 +3,6 @@ node_modules/
 dist/
 .env
 .env.server
+
+# Instagram publisher credentials, never committed.
+marketing/pipeline/.env

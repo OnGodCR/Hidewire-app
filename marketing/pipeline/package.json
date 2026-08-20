@@ -1,0 +1,6 @@
+{
+  "name": "hidewire-carousel-pipeline",
+  "private": true,
+  "type": "module",
+  "dependencies": { "puppeteer-core": "^24.0.0" }
+}

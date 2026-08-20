@@ -637,3 +637,256 @@ The scroller now has all three regimes measured: entry (18), between steps
 (16), and exit (17). If a fourth screenshot arrives, the probes to reach for
 first are probe-entry, probe-mid, and probe-exit in the session scratchpad,
 each of which samples its regime in small steps rather than at rest points.
+
+## 19. The waitlist verified against the live database
+
+Angad asked for proof the waitlist is truly connected. It now is, verified
+end to end on 2026-08-20:
+
+- **All 12 migrations show applied on the remote**, including 0012, via
+  `supabase migration list --linked`.
+- The real endpoint (`functions/api/waitlist.js`, run by `tools/serve.mjs`
+  in LIVE mode with the service role key) inserted a test address into the
+  live table and returned `added`, then `known` on the retry. So the
+  duplicate detection works against the real PostgREST version, not just the
+  fake upstream in the tests.
+- The row held exactly email and created_at, nothing else.
+- The anon key gets `42501 permission denied` on the table, so the lockdown
+  from 0012 holds: only the server-side service role can touch it.
+- The test row was deleted afterward; the table is left as found.
+
+**A blocker worth remembering:** the Supabase CLI on this machine was logged
+in as angadkochar2@gmail.com, a different account that owns a different,
+newer project (fjcgllboescucoghzypo, created 2026-08-12) plus Grantlytic and
+SpeakUpFinal. That account 403s on the real project. Angad re-logging the CLI
+fixed it. If a future session hits 403s on `--linked` commands, check which
+account `supabase projects list` reflects before assuming the project is
+gone.
+
+**What remains for the waitlist is deployment only:** a Cloudflare Pages
+project (build `npm run build`, output `dist`), the two secrets, and DNS for
+hidewire.org. Blocked on Angad's Cloudflare account. The database side is
+done and proven.
+
+## 20. The site now deploys to Vercel
+
+Angad asked to set up on Vercel rather than Cloudflare Pages. The repo-side
+work is done and tested; what remains needs his accounts.
+
+**What changed:**
+
+- `api/waitlist.js`: a Vercel Edge Function that wraps the unchanged endpoint
+  in `functions/api/waitlist.js`. Edge, not Node, because the Edge runtime
+  speaks the standard Request and Response types the endpoint is written
+  against. It forwards only the three documented env vars, not all of
+  `process.env`.
+- `vercel.json`: build command, output directory, and a port of every header
+  in `src/_headers`, because Vercel does not read that file. The CSP now
+  lives in two files that must stay identical; both files say so.
+- A thirteenth test proves the adapter serves the endpoint (honeypot round
+  trip: no env, no network). First attempt appended a test after the
+  runner's `process.exit`, where it silently never ran; the harness is a
+  `tests` object, not a `test()` function. Worth remembering: this harness
+  counts "N passing" from the object, so a test that is not in the object
+  does not exist.
+- README deploying section rewritten for both hosts; Cloudflare remains
+  wired and documented as the alternative.
+
+**The blocking discovery: the web repo has a GitHub remote
+(OnGodCR/Hidewire-web) but zero commits.** Nothing has ever been committed or
+pushed. Vercel deploys from GitHub, so the first commit and push is step one
+of the deployment, and it needs Angad's say-so.
+
+**Deployment steps remaining (all Angad):** push the repo, import it on
+vercel.com with preset "Other", set SUPABASE_URL and
+SUPABASE_SERVICE_ROLE_KEY as Sensitive env vars, add hidewire.org under
+Domains and set the registrar records. The database side is done and was
+verified end to end (section 19).
+
+Section 20 update, same day: Angad said push, and the initial commit is on
+GitHub. Root commit a76f392 on main at OnGodCR/Hidewire-web, 41 files. A
+secret sweep before the push found nothing, and .env, dist, and the dev stub
+state stayed ignored. The remaining steps are unchanged: import on
+vercel.com, the two Sensitive env vars, the domain.
+
+## 21. Instagram: prompt pack, brand pillars, and the publishing pipeline
+
+Angad wants the account posting two carousels a day, mostly brand rather
+than product, with him approving every post. Three artifacts:
+
+- **marketing/INSTAGRAM-CAROUSELS.md**: a system block for Claude design
+  sessions plus six product decks, then five non-game brand pillars (the
+  Archive, the Field Guide, Proof, the Group Chat, Transmissions) and a
+  14-slot weekly rotation. The system block corrects three stale facts in
+  BRIEF.md (30 minute rounds, 30 tiers, FILM no longer cosmetics-only) so
+  generated decks do not repeat them. BRIEF.md itself still carries those
+  errors and should get its own update pass.
+- **marketing/pipeline/**: render.mjs (slide HTML to 1080x1350 PNG via
+  system Chrome), publish.mjs (Meta Graph API carousel publisher, dry run
+  without credentials), queue.json (the approval gate: Claude adds decks
+  approved:false, only a human flips it), deck.css and the brand woff2s,
+  README with the loop and Angad's one-time Meta setup.
+- **marketing/carousels/06-waitlist/**: the first real deck, four slides,
+  rendered and verified on-brand.
+
+Buffer's public API is closed to new users and Later's is partner-only,
+so the original "queue drafts into Buffer" idea for tier 2 is not
+buildable; the approval gate lives in queue.json instead.
+
+Blocked on Angad: professional IG account, Meta developer app plus
+long-lived token, public image hosting (the Vercel site can serve an
+unlinked path), and the three env vars. Also his call: the pillar
+rotation is a starting grid, and BRIEF.md 8 note about a founder video
+still stands, generated decks alone will read as generated.
+
+## 22. Instagram DM approval loop, and the first live post
+
+**The first post is live**: instagram.com/p/DcRmgdYEr6X, the four-slide
+waitlist deck, published 2026-08-20 through the pipeline (media id
+18111376537826362). Two publish bugs found live and fixed: the
+Instagram-login flavour of the API lives on graph.instagram.com, not
+graph.facebook.com; and media_publish must wait for the carousel container
+to report FINISHED (code 9007 otherwise). Publisher also refreshes the
+60 day token on every live run and writes it back to .env.
+
+Angad then asked for approval over Instagram DM from his personal account,
+with @hidewire_game as the sender, plus a standing bridge from Claude
+design sessions. Built:
+
+- **0015_ig_review.sql** (renamed from 0013 after colliding with the
+  advisor session's 0013): ig_review (deck/status/decided_at) and
+  ig_contacts (igsid, is_reviewer flag). NOT YET APPLIED: the classifier
+  blocked db push three ways this session; Angad runs
+  `supabase db push --linked`, which also applies the advisor session's
+  pending 0014.
+- **Webhook live at hidewire.org/api/ig-webhook** (web repo, host-neutral
+  + Vercel edge adapter, same pattern as the waitlist). Handshake
+  verified 403 on wrong token. Records every sender; only a contact with
+  is_reviewer=true can approve/decline, so a stranger DMing "approve" is
+  a row, not a decision. HMAC signature check when META_APP_SECRET set.
+- **send-review.mjs**: DMs a rendered deck's slides plus Approve/Decline
+  quick replies to REVIEWER_IGSID. 24 hour messaging window applies;
+  every reviewer reply reopens it.
+- **sync-approvals.mjs**: pulls DM decisions into queue.json so the
+  publisher keeps exactly one gate.
+
+Blocked on Angad, in order: run the db push; set IG_VERIFY_TOKEN (any
+long random string) and META_APP_SECRET (app Settings, Basic) on the
+Vercel project; configure the webhook in the Meta app (callback
+https://hidewire.org/api/ig-webhook, same verify token, subscribe to
+messages); add his personal IG as an Instagram Tester and accept; DM the
+account once so ig_contacts captures his IGSID, then we flag him
+reviewer and put REVIEWER_IGSID in the pipeline .env. If sending fails
+on permissions, regenerate the token with the messages scope included.
+
+The design-to-code bridge stands as the handoff contract in
+INSTAGRAM-CAROUSELS.md (artifact link pasted per deck). The automatic
+version, a GitHub inbox the design project commits to and a scheduled
+task here that polls, renders, and DMs for review, is designed but not
+built; it needs the claude.ai project connected to the GitHub repo.
+
+## 23. The DM approval loop hit Meta's App Review wall; a review page instead
+
+The webhook chain was debugged live through five real, stacked gotchas,
+each verified before the next appeared: (1) the callback must be the www
+host, the apex 308-redirects and Meta will not follow; (2) webhooks in
+the Instagram-login flow are signed with the INSTAGRAM app secret from
+the use-case page, not the Meta app secret from Settings, Basic: two
+different values, near-identical labels; (3) besides the dashboard
+config, the account itself must be bound via POST /me/subscribed_apps;
+(4) the account's own Instagram app setting, Messaging tools, Allow
+access to messages, ships off and silently filters delivery; (5) test
+events arrive as entry[].changes[] while real ones use
+entry[].messaging[], so the parser handles both, and a flight-recorder
+row (debug:last-event) stores the last signed payload raw because a
+payload in an unknown shape is otherwise indistinguishable from no
+delivery.
+
+After all five: read receipts (the app user's own actions) deliver, but
+messages from another account never do, and the messaging send API
+rejects the dashboard's account id (IGSIDs are a separate namespace only
+obtainable from inbound events). Conclusion: real-message content under
+standard access appears to be gated behind Advanced Access for
+instagram_business_manage_messages, which means Meta App Review. The DM
+infra (webhook, sender, sync) is deployed and stays; it goes live if
+that review is ever done.
+
+**What shipped instead: hidewire.org/api/review?key=..., a private
+review page.** Pending decks render their slides with Approve and
+Decline buttons; taps upsert ig_review; sync-approvals.mjs pulls
+decisions into queue.json; the publisher is unchanged. Auth is one long
+key in the URL held by Angad's phone bookmark and the Vercel env.
+Blocked on Angad: set REVIEW_KEY in Vercel and redeploy. The 06-waitlist
+deck is seeded as a pending row for a safe first test, it being already
+published, so either button changes nothing live.
+
+Reviewer identity note: ig_contacts has angadkochar2 flagged is_reviewer
+under the dashboard id 17841469812243764. For the DM path that id is
+WRONG (messaging wants an IGSID); for anything else it is merely a label.
+
+## 24. The design-to-code connector: ingest.mjs
+
+Angad asked how Claude design sessions hand decks to Claude Code. The
+answer turned out to be better than pasting links: **Claude Code can
+enumerate his artifact gallery and read any artifact's contents.** So a
+design session's act of publishing IS the handoff. Pasting a link still
+works and is quicker when one deck is waiting.
+
+**marketing/pipeline/ingest.mjs** does everything after that in one
+command: takes a URL or file plus a NN-slug, splits the document on
+`<!-- SLIDE NN -->` markers, writes slide-NN.html, renders PNG and JPEG
+at 1080x1350, copies the JPEGs into the website's src/ig/<slug>/, queues
+the deck as approved:false, and seeds a pending ig_review row so it
+appears on the review page. It deliberately does not approve anything
+and does not push the website; the push stays a visible step.
+
+Verified end to end on a synthetic two-slide artifact: slides split,
+rendered on brand, copied, queued, review row seeded. Test deck then
+removed from both repos, the queue, and the database.
+
+Also added SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to the pipeline
+.env, which ingest needs for seeding and sync-approvals needs for
+reading.
+
+Design sessions owe three things: the SYSTEM BLOCK rules, the SLIDE
+markers, and self-contained slides. No external stylesheet links, since
+the artifact travels without this repo's deck.css.
+
+## 25. First real deck from a design session, ingested
+
+Angad published a nine-slide deck as an artifact ("HideWire Instagram
+Posts") and it is now rendered, hosted, and pending on the review page as
+07-the-rules. The full path worked: gallery listing, artifact fetch,
+ingest, render, host, queue, seed.
+
+**The artifact format was not the documented one, and that is fine now.**
+A published artifact is a BUNDLE: each slide ships as its own gzipped
+HTML page inside a manifest island, with an ext_resources island naming
+them "Slide 01 Cover" and so on. That naming is the authoritative order;
+page_order was empty and manifest key order is not a contract. ingest.mjs
+now reads bundles first and falls back to SLIDE markers.
+
+**Two defects in the first deck, both fixed in the pipeline rather than
+by asking the designer to redo anything:**
+
+- Slides styled with system fallbacks (Helvetica, ui-monospace) because
+  an artifact cannot reach this repo's fonts. Ingest now injects the real
+  Space Grotesk and IBM Plex Mono woff2s and overrides the inline
+  font-family with author !important, which beats a normal inline style.
+- Slides 02 and 09 referenced assets/hidewire-logo.png, which the bundle
+  never shipped, so both rendered a broken-image icon. Ingest now copies
+  marketing/pipeline/assets/ into every deck; the mark was rendered to a
+  transparent 512px PNG from the website's SVG.
+
+**Copy checked against BRIEF 9 and it is clean**: no face recognition, no
+stranger play (slide 02 says "played with people you already know", slide
+03 "nobody joins a round they weren't invited to"), no hiding places
+depicted at all, no launch date, and the only purchase claim is the
+allowed one, "the Seeker role cannot be bought". Facts match current
+reality including 30 minute rounds.
+
+**One judgment call left to Angad, flagged not decided:** slide 02 reads
+"Think Minecraft manhunt · in real life". That is a third party's
+trademark in an ad. Nominative comparison is usually defensible and the
+phrasing is common positioning, but BRIEF 9 is strict and it is his call,
+so the deck sits pending rather than being altered or approved.

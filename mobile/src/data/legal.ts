@@ -10,7 +10,7 @@
 // web pages, which App Review requires you to link.
 
 export const LEGAL_VERSION = '2026-07-28';
-export const CONTACT_EMAIL = 'support@frame.game';
+export const CONTACT_EMAIL = 'hidewiresupport@gmail.com';
 
 export interface Section {
   heading: string;

@@ -1,0 +1,27 @@
+/* Shared slide styles. Every slide is a fixed 1080x1350 artboard. */
+@font-face { font-family: 'Space Grotesk'; src: url('../pipeline/fonts/space-grotesk-700.woff2') format('woff2'); font-weight: 700; }
+@font-face { font-family: 'Space Grotesk'; src: url('../pipeline/fonts/space-grotesk-500.woff2') format('woff2'); font-weight: 500; }
+@font-face { font-family: 'IBM Plex Mono'; src: url('../pipeline/fonts/ibm-plex-mono-600.woff2') format('woff2'); font-weight: 600; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 1080px; height: 1350px; overflow: hidden;
+  background: #0A0A0C; color: #F4F4F2;
+  font-family: 'Space Grotesk', sans-serif;
+  /* The 80px safe margin from the system block. */
+  padding: 80px;
+  display: flex; flex-direction: column;
+}
+.mono {
+  font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.18em;
+}
+.accent { color: #C8FF2E; }
+.counter {
+  position: absolute; top: 80px; right: 80px;
+  font-size: 26px; color: #5C5C66;
+}
+.footer-dot {
+  position: absolute; bottom: 80px; left: 80px;
+  font-size: 26px; color: #5C5C66;
+}

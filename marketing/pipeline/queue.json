@@ -1,0 +1,35 @@
+{
+  "comment": "The approval gate. Claude adds decks with approved:false; only a human flips approved to true. After a live publish, set published to the date so a re-run cannot double post.",
+  "decks": [
+    {
+      "dir": "marketing/carousels/06-waitlist",
+      "slides": [
+        "slide-01.jpg",
+        "slide-02.jpg",
+        "slide-03.jpg",
+        "slide-04.jpg"
+      ],
+      "caption": "Hiding isn't enough. Prove it.\n\nHide and seek across a real city. Your phone makes you prove where you're hiding, on a timer, to the person hunting you.\n\nEveryone on the list gets a link to an exclusive in-game reward the day it drops.\n\nhidewire.org · link in bio",
+      "approved": false,
+      "published": "2026-08-20"
+    },
+    {
+      "dir": "marketing/carousels/07-the-rules",
+      "slides": [
+        "slide-01.jpg",
+        "slide-02.jpg",
+        "slide-03.jpg",
+        "slide-04.jpg",
+        "slide-05.jpg",
+        "slide-06.jpg",
+        "slide-07.jpg",
+        "slide-08.jpg",
+        "slide-09.jpg"
+      ],
+      "caption": "Nine cards. The whole game.\n\nHide and seek across a real city, played with people you already know. One code, one zone, thirty minutes. Every few minutes your phone asks you to prove where you are hiding, and the proof goes straight to the person hunting you.\n\nMiss the window and you are blacked out. The whole group sees it.\n\nEveryone on the list gets a link to an exclusive in-game reward the day it drops.\n\nhidewire.org · link in bio\n\n#hideandseek #irlgaming #outdoorgames #groupgames #jetlagthegame",
+      "approved": false,
+      "published": "2026-08-20",
+      "mediaId": "18135774544613938"
+    }
+  ]
+}
