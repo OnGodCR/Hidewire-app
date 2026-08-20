@@ -63,6 +63,7 @@ Two conventions, both deliberate:
 | Baked Seattle world | `data/world.json` | Live Overpass fetch, already works |
 | CONTINUE AS TEST ACCOUNT on the auth screen | `screens/AuthGate.tsx` | Real Google or Apple sign-in |
 | Games near you | `NEARBY_GAMES`, `screens/tabs/LocationTab.tsx` | Geo query on open parties |
+| Storefront country `US` | `TEST_STORE_COUNTRY`, `config.ts` | The payment provider's storefront country. Outside test mode this is null and `boxAvailability` fails closed, so the crate shelf is region-blocked until the real source exists. |
 
 ---
 
@@ -155,15 +156,14 @@ Every paid SKU that used to be here is gone: the season pass paid track, the
 darkroom set, both tier skips, the founder bundle, and the first-purchase
 offer.
 
-What replaced them, in `data/lootboxes.ts`, and **none of it does anything
-yet**:
+What replaced them, in `data/lootboxes.ts`:
 
 | Surface | State |
 |---|---|
-| The five loot boxes | Render with real prices and real published odds. **The buy button does nothing.** There is no roll, client or server. |
-| `FILM_PACKS` | Render. No payment provider, no grant. |
+| The five loot boxes | Fully playable in the demo: `openBox()` in `GameContext.tsx` deducts the FILM, **rolls client-side on the published odds**, grants the item into `profile.items`, and pays the duplicate refund. The client-side roll is itself a fixture: the real roll is `open_box()` in `0010_monetization.sql`, server-side, and the local one exists only so the store is playable before the client is wired up. The paid box opens free in TEST_MODE and refuses outside it. |
+| `FILM_PACKS` | Tapping a pack grants its FILM, **TEST_MODE only** (`buyFilmPack`). No payment provider; outside test mode it is a no-op. |
 | WATCH AN AD | Renders 250 FILM and the four-a-day cap. **No ad network is wired up** and the row grants nothing. |
-| The twelve utility items | Defined, priced, and rollable in theory. **No round consumes one**, so nothing they describe actually happens. |
+| The twelve utility items | Defined, priced, rollable, and now grantable into a local inventory. **No round consumes one**, so nothing they describe actually happens in play. |
 
 Two things about this that are not fixtures and should not be "fixed" by
 wiring the client:

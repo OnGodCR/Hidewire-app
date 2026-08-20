@@ -22,7 +22,14 @@ import {
 } from './persist';
 import * as notify from './notify';
 import { TEST_MODE, TIME_SCALE } from '../config';
-import { passState, XP_PER_TIER, type PassState, type StoreProduct } from '../data/catalog';
+import {
+  DUPLICATE_REFUND,
+  LOOT_BOXES,
+  RARITY_ORDER,
+  UTILITY_ITEMS,
+  type UtilityItem,
+} from '../data/lootboxes';
+import { passState, PAID_TIER_FILM, TIERS, XP_PER_TIER, type PassState, type StoreProduct } from '../data/catalog';
 import {
   FRESH_DAILY,
   DAILY_REWARD,
@@ -110,10 +117,13 @@ export interface Bot {
   pos: { x: number; y: number }; // normalized 0..1 map coords
 }
 
+export type TickerCategory = 'REVEAL' | 'TAG' | 'ZONE' | 'CHECK-IN';
+
 export interface TickerEvent {
   id: number;
   text: string;
   tone: 'info' | 'accent' | 'danger' | 'warn';
+  category: TickerCategory;
 }
 
 export interface RevealPin {
@@ -215,8 +225,23 @@ export interface Profile {
   /** Drives season pass tier. See passState() in data/catalog.ts. */
   seasonXp: number;
   owned: string[];
+  /**
+   * Utility items from loot boxes, by item id. Kept separate from `owned`
+   * because cosmetics and consumables have different lifecycles: a frame is
+   * forever, a GRACE is spent. The count is capped at 1 per item because a
+   * duplicate roll refunds FILM instead of stacking; see DUPLICATE_REFUND.
+   */
+  items: Record<string, number>;
   equipped: Equipped;
   paidPass: boolean;
+}
+
+/** What one loot box open produced. */
+export interface OpenBoxResult {
+  item: UtilityItem;
+  /** FILM paid back because the roll landed on something already owned. */
+  refund: number;
+  duplicate: boolean;
 }
 
 /**
@@ -236,6 +261,7 @@ export const FRESH_PROFILE: Profile = {
   film: 0,
   seasonXp: 0,
   owned: ['title-unseen', 'pin-acid', 'frame-brackets', 'static-default', 'tag-shutter'],
+  items: {},
   equipped: {
     title: 'title-unseen',
     pin: 'pin-acid',
@@ -317,10 +343,15 @@ export const ROUND_DISPLAY_SECONDS = ROUND_DISPLAY_MINUTES * 60;
 const ROUND_REAL_SECONDS = ROUND_DISPLAY_SECONDS;
 
 let tickerId = 0;
-const ev = (text: string, tone: TickerEvent['tone'] = 'info'): TickerEvent => ({
+const ev = (
+  text: string,
+  tone: TickerEvent['tone'] = 'info',
+  category: TickerCategory = 'CHECK-IN',
+): TickerEvent => ({
   id: ++tickerId,
   text,
   tone,
+  category,
 });
 
 function freshRound(role: Role): RoundState {
@@ -349,8 +380,9 @@ function freshRound(role: Role): RoundState {
 type Script = Record<number, (r: RoundState) => void>;
 
 /** PRD 4.4: 60 seconds from the tick to submit. Real seconds now that the
- *  round clock is real time, so this is the actual specified window. */
-const CHECKIN_WINDOW = 60;
+ *  round clock is real time, so this is the actual specified window. Exported
+ *  so the round UI and the in-round rules sheet quote the same number. */
+export const CHECKIN_WINDOW = 60;
 
 /**
  * The hider's check-in ticks, as elapsed real seconds into the round.
@@ -371,32 +403,32 @@ export const HIDER_CHECKIN_TICKS = [
 ] as const;
 
 const hiderScriptAuthored: Script = {
-  6: (r) => r.ticker.unshift(ev('MAYA passed check-in 03')),
-  14: (r) => r.ticker.unshift(ev('BEACON at Fountain Plaza claimed by JULES')),
+  6: (r) => r.ticker.unshift(ev('MAYA passed check-in 3', 'info', 'CHECK-IN')),
+  14: (r) => r.ticker.unshift(ev('JULES claimed the beacon at Fountain Plaza', 'info', 'ZONE')),
   72: (r) => {
     r.pingFlashUntil = 80;
-    r.ticker.unshift(ev("Reveal tick · you've been pinged", 'warn'));
+    r.ticker.unshift(ev("Reveal tick · you've been pinged", 'warn', 'REVEAL'));
   },
   92: (r) => {
     const dev = r.bots.find((b) => b.id === 'dev')!;
     dev.state = 'tagged';
-    r.ticker.unshift(ev('DEV was tagged by KAI', 'danger'));
+    r.ticker.unshift(ev('DEV was tagged by KAI', 'danger', 'TAG'));
   },
   108: (r) => {
     r.shrinkWarnUntil = 138;
-    r.ticker.unshift(ev('Zone contracts to 75% in 0:60', 'warn'));
+    r.ticker.unshift(ev('Zone contracts to 75% in a minute', 'warn', 'ZONE'));
   },
   138: (r) => {
     r.zoneScale = 0.75;
     r.shrinkWarnUntil = null;
-    r.ticker.unshift(ev('Zone contracted · 750 m radius', 'warn'));
+    r.ticker.unshift(ev('Zone contracted · 750 m radius', 'warn', 'ZONE'));
   },
   204: (r) => {
     const ari = r.bots.find((b) => b.id === 'ari')!;
     ari.state = 'blackout';
-    r.ticker.unshift(ev('ARI was BLACKED OUT · missed check-in', 'danger'));
+    r.ticker.unshift(ev('ARI missed a check-in and is blacked out', 'danger', 'CHECK-IN'));
   },
-  222: (r) => r.ticker.unshift(ev('JULES used GHOST PING', 'accent')),
+  222: (r) => r.ticker.unshift(ev('JULES used GHOST PING', 'accent', 'REVEAL')),
 };
 
 // Opening each check-in window is generated rather than written out, so the
@@ -449,30 +481,30 @@ const revealAll = (r: RoundState, ttl = 30) => {
 };
 
 const seekerScriptAuthored: Script = {
-  4: (r) => r.ticker.unshift(ev('Check-in tick 01 sent to all hiders')),
+  4: (r) => r.ticker.unshift(ev('Check-in tick 1 sent to all hiders', 'info', 'CHECK-IN')),
   8: (r) => feed(r, 'maya', 1),
   12: (r) => feed(r, 'jules', 1),
   16: (r) => feed(r, 'ari', 1),
   20: (r) => feed(r, 'dev', 1),
   32: (r) => {
     revealAll(r);
-    r.ticker.unshift(ev('Reveal tick · 4 positions on map', 'accent'));
+    r.ticker.unshift(ev('Reveal tick · 4 positions on the map', 'accent', 'REVEAL'));
   },
   56: (r) => {
     const ari = r.bots.find((b) => b.id === 'ari')!;
     ari.state = 'blackout';
-    r.ticker.unshift(ev('ARI was BLACKED OUT · missed check-in', 'danger'));
+    r.ticker.unshift(ev('ARI missed a check-in and is blacked out', 'danger', 'CHECK-IN'));
   },
   70: (r) => feed(r, 'maya', 2),
   74: (r) => feed(r, 'jules', 2),
   78: (r) => feed(r, 'dev', 2),
   82: (r) => {
     r.proximityTarget = 'maya';
-    r.ticker.unshift(ev('BLE signal detected nearby', 'accent'));
+    r.ticker.unshift(ev('Someone is close', 'accent', 'TAG'));
   },
   128: (r) => {
     revealAll(r);
-    r.ticker.unshift(ev('Reveal tick', 'accent'));
+    r.ticker.unshift(ev('Reveal tick · positions on the map', 'accent', 'REVEAL'));
   },
   150: (r) => feed(r, 'jules', 3),
   154: (r) => feed(r, 'dev', 3),
@@ -480,13 +512,13 @@ const seekerScriptAuthored: Script = {
     const dev = r.bots.find((b) => b.id === 'dev')!;
     if (dev.state === 'alive') {
       dev.state = 'blackout';
-      r.ticker.unshift(ev('DEV was BLACKED OUT · lens covered', 'danger'));
+      r.ticker.unshift(ev('DEV covered the lens and is blacked out', 'danger', 'CHECK-IN'));
     }
   },
   182: (r) => {
     if (r.bots.find((b) => b.id === 'jules')!.state === 'alive') {
       r.proximityTarget = 'jules';
-      r.ticker.unshift(ev('BLE signal detected nearby', 'accent'));
+      r.ticker.unshift(ev('Someone is close', 'accent', 'TAG'));
     }
   },
 };
@@ -590,6 +622,18 @@ interface Game {
   /** Pays the one-time tutorial grant. Returns the FILM paid, or 0. */
   claimTutorialGrant: () => number;
   purchase: (id: string, costFilm: number) => boolean;
+  /**
+   * Opens a loot box: deducts the FILM, rolls on the published odds, grants
+   * the item. Returns what happened, or null if it could not (unaffordable,
+   * unknown box, or a paid box outside test mode).
+   */
+  openBox: (boxId: string) => OpenBoxResult | null;
+  /**
+   * Grants a FILM pack. Test mode only: with no payment provider there is no
+   * legitimate way to charge for one, so outside the demo this is a no-op
+   * that returns false.
+   */
+  buyFilmPack: (film: number) => boolean;
   buyPass: () => void;
   redeemBundle: (frameId: string, film: number) => void;
   /** Deducts FILM. Used by seeker bidding, which is a sink, not a purchase. */
@@ -702,6 +746,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       if (savedApplause) setApplause(savedApplause);
       if (savedAge?.bracket) setAgeBracket(savedAge.bracket);
       if (savedReferral) setReferralProgress(savedReferral);
+      // A returning player does not re-run the funnel. Every launch used to
+      // start at the splash and walk the age gate, the legal wall, and the
+      // handle picker again, because nothing ever fast-forwarded the route.
+      // Skip straight home only when every gate has already been passed; any
+      // missing piece falls back to the funnel, which resumes itself.
+      if (
+        savedAge?.bracket &&
+        savedSeen?.tutorialDone &&
+        savedProfile?.handle &&
+        savedAuth
+      ) {
+        setRoute('home');
+      }
       setHydrated(true);
     })();
     return () => {
@@ -1018,7 +1075,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         checkin: null,
         checkinsPassed: r.checkinsPassed + 1,
         ticker: [
-          ev(`Check-in 0${r.checkin.index} submitted · visible to seeker`, 'accent'),
+          ev(`Check-in ${r.checkin.index} submitted · visible to the seeker`, 'accent', 'CHECK-IN'),
           ...r.ticker,
         ],
       };
@@ -1042,7 +1099,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         tags: [...r.tags, r.proximityTarget],
         proximity: 0,
         proximityTarget: null,
-        ticker: [ev(`TAG CONFIRMED · ${name} eliminated`, 'accent'), ...r.ticker],
+        ticker: [ev(`Tag confirmed · ${name} is out`, 'accent', 'TAG'), ...r.ticker],
         outcome: remaining === 0 ? 'cleared' : r.outcome,
       };
     });
@@ -1093,8 +1150,88 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return ok;
   }, []);
 
+  /**
+   * Opens a loot box in the demo engine.
+   *
+   * **The real roll is `open_box()` in 0010_monetization.sql**, server-side,
+   * for the same reason FILM is not client-writable: a roll the client
+   * performs is a roll the client can rig. This local version exists so the
+   * store is playable before the client is wired to the backend, and it obeys
+   * the published rules exactly: one item per open, odds as printed,
+   * duplicates refund FILM rather than stacking.
+   *
+   * The roll happens OUTSIDE the state updater on purpose. Session 2's
+   * double-payout bug came from side effects inside an updater React is free
+   * to run twice; an impure updater here would mean the reveal shows one item
+   * and the inventory stores another. The updater below is pure and only
+   * applies a result already decided.
+   */
+  const openBox = useCallback(
+    (boxId: string): OpenBoxResult | null => {
+      const box = LOOT_BOXES.find((b) => b.id === boxId);
+      if (!box) return null;
+      // The paid box has no client-side purchase path outside the demo:
+      // real money must go through the store, and the store is not wired.
+      if (box.price !== null && !TEST_MODE) return null;
+      const cost = box.film ?? 0;
+      if (profile.film < cost) return null;
+
+      // Roll rarity on the published table, then uniformly within the pool.
+      let r = Math.random();
+      let rarity = RARITY_ORDER[RARITY_ORDER.length - 1];
+      for (const band of RARITY_ORDER) {
+        if (r < box.odds[band]) {
+          rarity = band;
+          break;
+        }
+        r -= box.odds[band];
+      }
+      const pool = UTILITY_ITEMS.filter((i) => i.rarity === rarity);
+      const item = pool[Math.floor(Math.random() * pool.length)];
+      const duplicate = (profile.items?.[item.id] ?? 0) > 0;
+      const refund = duplicate ? DUPLICATE_REFUND[rarity] : 0;
+
+      setProfile((p) => {
+        if (p.film < cost) return p;
+        return {
+          ...p,
+          film: p.film - cost + refund,
+          items: duplicate ? p.items : { ...(p.items ?? {}), [item.id]: 1 },
+        };
+      });
+      return { item, refund, duplicate };
+    },
+    [profile.film, profile.items],
+  );
+
+  /**
+   * Grants a FILM pack. See the interface comment: demo only, because there
+   * is no payment provider, and a production path that minted FILM for free
+   * would be the exact economy hole the column-level grants exist to close.
+   */
+  const buyFilmPack = useCallback((film: number): boolean => {
+    if (!TEST_MODE) return false;
+    setProfile((p) => ({ ...p, film: p.film + film }));
+    return true;
+  }, []);
+
+  /**
+   * Buying the pass is retroactive: every non-milestone paid tier the player
+   * has already reached pays its FILM immediately, so tier 12 at purchase time
+   * is worth the same as tier 12 reached after purchase. Milestone tiers pay a
+   * case, not FILM, so they are excluded here. Guarded on paidPass so a repeat
+   * call can never pay twice, and computed inside the updater from the same
+   * seasonXp the pass screen derives its tier from.
+   */
   const buyPass = useCallback(
-    () => setProfile((p) => ({ ...p, paidPass: true })),
+    () =>
+      setProfile((p) => {
+        if (p.paidPass) return p;
+        const tier = passState(p.seasonXp).tier;
+        const retro =
+          TIERS.filter((t) => !t.milestone && t.n <= tier).length * PAID_TIER_FILM;
+        return { ...p, paidPass: true, film: p.film + retro };
+      }),
     [],
   );
 
@@ -1168,6 +1305,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         addXp,
         claimTutorialGrant,
         purchase,
+        openBox,
+        buyFilmPack,
         buyPass,
         redeemBundle,
         spendFilm,

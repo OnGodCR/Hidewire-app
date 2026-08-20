@@ -181,7 +181,7 @@ export function GameTab({ onTab }: { onTab: (t: Tab) => void }) {
             v={compact(profile.film)}
             tint={STAT_TINT.film}
             fill={Math.min(1, profile.film / 20000)}
-            note="IN THE BANK"
+            note=""
           />
           <StatCard
             glyph="level"
@@ -197,7 +197,7 @@ export function GameTab({ onTab }: { onTab: (t: Tab) => void }) {
             v={String(daily.streak)}
             tint={STAT_TINT.streak}
             fill={Math.min(1, daily.streak / 10)}
-            note="WEEKS IN A ROW"
+            note="WEEKS"
           />
           <StatCard
             glyph="rounds"
@@ -205,7 +205,7 @@ export function GameTab({ onTab }: { onTab: (t: Tab) => void }) {
             v={seen.finishedRound ? '1+' : '0'}
             tint={STAT_TINT.rounds}
             fill={seen.finishedRound ? 1 : 0}
-            note={seen.finishedRound ? 'FINISHED' : 'NONE YET'}
+            note=""
           />
         </View>
       </FadeIn>

@@ -78,9 +78,20 @@ const TIERS: Record<string, CrateLook> = {
 
 const FALLBACK = TIERS['box-tray'];
 
-export function CrateArt({ id, size = 96 }: { id: string; size?: number }) {
-  const look = TIERS[id] ?? FALLBACK;
-  const uid = id.replace(/[^a-z]/g, '');
+export function CrateArt({
+  id,
+  size = 96,
+  open,
+}: {
+  id: string;
+  size?: number;
+  /** Force the lifted lid and full glow, whatever the tier. The reveal uses
+      this so the crate a player just opened is the crate shown open. */
+  open?: boolean;
+}) {
+  const base = TIERS[id] ?? FALLBACK;
+  const look = open ? { ...base, open: true, bleed: 1 } : base;
+  const uid = id.replace(/[^a-z]/g, '') + (open ? 'o' : '');
 
   // Box corners. Front face is a rectangle; top and right are parallelograms
   // sheared to give it depth without a real 3D projection.

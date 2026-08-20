@@ -1,48 +1,83 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { color, font, radius, space } from '../theme';
-import { Btn, Card, Label, Mono, Rule } from '../components/ui';
+import { Body, Btn, Card, Label, Mono, SectionHeader, Toast } from '../components/ui';
 import { CosmeticPreview } from '../components/Cosmetics';
 import { CrateArt, FilmStack } from '../components/CrateArt';
 import { ProceduralPhoto } from '../components/ProceduralPhoto';
 import { CountUp, FadeIn, PressScale, useFlash } from '../components/motion';
-import { Cosmetic, SHOP_ITEMS, SEASON, TIER_COUNT, categoryKind, CATEGORIES } from '../data/catalog';
+import { Cosmetic, SHOP_ITEMS } from '../data/catalog';
 import {
   LOOT_BOXES,
   FILM_PACKS,
+  PAID_BOX_ID,
   RARITY_ORDER,
   RARITY_LABEL,
+  RARITY_COLOR,
   itemOdds,
   boxAvailability,
   type LootBox,
+  type UtilityItem,
 } from '../data/lootboxes';
 import { ECONOMY } from '../data/economy';
-import { useGame } from '../engine/GameContext';
+import { TEST_STORE_COUNTRY } from '../config';
+import { useGame, type OpenBoxResult } from '../engine/GameContext';
 import { Animated } from 'react-native';
 import Svg, { Line as SvgLine, Rect } from 'react-native-svg';
 
+// ---------------------------------------------------------------------------
+// The store, reorganised around one question per shelf.
+//
+// The previous layout was five identical tile grids and the player had to
+// open every box to learn the one number that separates them. The order now
+// answers, top to bottom: what is the flagship (the paid case, alone), what
+// do my earnings buy (the four FILM crates, with their odds ladder visible on
+// the shelf), how do I get more FILM, and what cosmetics exist.
+//
+// Rarity is a colour everywhere: grey, green, blue, acid. The odds strip on
+// each tile is those four colours at their true proportions, so "better box"
+// is something you can see across the shelf without reading a single number.
+// ---------------------------------------------------------------------------
+
 export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
-  const { go, profile, purchase, ageBracket, seen, markSeen } = useGame();
+  const { go, profile, purchase, openBox, buyFilmPack, ageBracket, seen, markSeen } =
+    useGame();
+  const [toast, setToast] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
+  // Frames are the only cosmetic sold here. The rest of the catalogue
+  // (titles, pins, blackout styles, tags) comes from the season pass and
+  // drops, and a grid of them in the store was clutter that outranked the
+  // things that matter: crates, FILM, frames.
   const frames = SHOP_ITEMS.filter((i) => i.category === 'frame');
-  const others = SHOP_ITEMS.filter((i) => i.category !== 'frame');
 
   /**
-   * The one disclosure that stays in the app.
-   *
-   * Everything else that used to be printed under the shop (FILM is never sold,
-   * cosmetics only, nothing affects a round) has moved to the Terms, where it
-   * belongs and where it is not competing with the thing being sold. This one
-   * is different: it is a **permanent, irreversible consequence of spending
-   * money**, so it has to be in front of the player before they spend it rather
-   * than in a document they accepted once. Shown every time the store opens.
+   * The one disclosure that stays in the app: buying anything permanently
+   * removes ads. Permanent consequences of spending belong in front of the
+   * player, not in the Terms. Shown on entry until dismissed for good.
    */
   const [adsNotice, setAdsNotice] = useState(!seen.adsNoticeHidden);
 
   /** The box whose contents are open, or null. */
   const [detail, setDetail] = useState<LootBox | null>(null);
+
+  /** The result of the open being revealed, or null. */
+  const [reveal, setReveal] = useState<OpenBoxResult | null>(null);
+  /** Which crate's art to show behind the reveal. */
+  const [revealBoxId, setRevealBoxId] = useState<string>('box-tray');
+
+  const buyBox = (box: LootBox) => {
+    const result = openBox(box.id);
+    if (!result) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setRevealBoxId(box.id);
+    setDetail(null);
+    setReveal(result);
+  };
+
+  const paidBox = LOOT_BOXES.find((b) => b.id === PAID_BOX_ID)!;
+  const filmBoxes = LOOT_BOXES.filter((b) => b.id !== PAID_BOX_ID);
 
   return (
     <View style={styles.screen}>
@@ -72,25 +107,39 @@ export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
           </View>
         </FadeIn>
 
-        {/* ---- loot boxes ---- */}
+        {/* ---- the flagship, alone at the top ---- */}
         <FadeIn index={1}>
-          <View style={styles.sectionHead}>
-            <Label tone="text">Boxes</Label>
-            <Label tone="faint">ODDS PUBLISHED</Label>
-          </View>
+          <FeaturedCase box={paidBox} onOpen={() => setDetail(paidBox)} />
+        </FadeIn>
+
+        {/* ---- FILM crates ---- */}
+        <FadeIn index={2}>
+          <SectionHeader
+            title="Film crates"
+            right="ODDS PUBLISHED"
+            style={{ marginTop: space(6), marginBottom: space(3) }}
+          />
         </FadeIn>
         <View style={styles.boxGrid}>
-          {LOOT_BOXES.map((box, i) => (
-            <BoxTile key={box.id} box={box} index={i} onOpen={() => setDetail(box)} />
+          {filmBoxes.map((box, i) => (
+            <BoxTile
+              key={box.id}
+              box={box}
+              index={i}
+              bracket={ageBracket}
+              onOpen={() => setDetail(box)}
+            />
           ))}
         </View>
+        <RarityKey />
 
         {/* ---- FILM ---- */}
-        <FadeIn index={2}>
-          <View style={styles.sectionHead}>
-            <Label tone="text">Film</Label>
-            <Label tone="faint">SPENDABLE ON ANY BOX</Label>
-          </View>
+        <FadeIn index={3}>
+          <SectionHeader
+            title="Film"
+            right="OPENS ANY CRATE"
+            style={{ marginTop: space(6), marginBottom: space(3) }}
+          />
         </FadeIn>
 
         {/* Rewarded video. Capped, and the cap is shown rather than discovered
@@ -114,9 +163,14 @@ export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
 
         <View style={styles.packGrid}>
           {FILM_PACKS.map((pack, i) => (
-            <FadeIn key={pack.id} index={i} delay={60}>
+            <FadeIn key={pack.id} index={i} delay={60} style={styles.packWrap}>
               <PressScale
-                onPress={() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)}
+                onPress={() => {
+                  if (buyFilmPack(pack.film)) {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    setToast(`+${pack.film.toLocaleString()} FILM`);
+                  }
+                }}
                 style={styles.pack}
               >
                 {pack.tag && <Mono style={styles.packTag}>{pack.tag}</Mono>}
@@ -129,19 +183,15 @@ export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
           ))}
         </View>
 
-        {/* Frames get flagship billing rather than being one tab of five.
-            Every check-in photo a hider sends is wearing theirs, and the
-            seeker sees every one of them, so it is by a wide margin the
-            highest impression-count cosmetic in the product. It is also the
-            only one that reads as status in a game about photographs. */}
+        {/* Frames get flagship billing among the cosmetics: every check-in
+            photo a hider sends is wearing theirs, so it is the one cosmetic
+            other players actually look at. */}
         <FadeIn index={2}>
-          <View style={styles.sectionHead}>
-            <Label tone="text">Photo frames</Label>
-            <Label tone="faint">SEEN BY EVERYONE</Label>
-          </View>
-          <Mono style={styles.sectionNote}>
-            Wraps every capture you send. The one cosmetic other players actually look at.
-          </Mono>
+          <SectionHeader
+            title="Photo frames"
+            right="SEEN BY EVERYONE"
+            style={{ marginTop: space(6), marginBottom: space(3) }}
+          />
         </FadeIn>
         {frames.map((item, i) => (
           <FrameTile
@@ -154,33 +204,24 @@ export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
           />
         ))}
 
-        {/* everything else */}
-        <FadeIn index={3}>
-          <View style={styles.sectionHead}>
-            <Label tone="text">Everything else</Label>
-          </View>
-        </FadeIn>
-        <View style={styles.grid}>
-          {others.map((item, i) => (
-            <ShopTile
-              key={item.id}
-              item={item}
-              index={i}
-              owned={profile.owned.includes(item.id)}
-              affordable={profile.film >= (item.cost ?? 0)}
-              onBuy={() => purchase(item.id, item.cost ?? 0)}
-            />
-          ))}
-        </View>
-
       </ScrollView>
 
       <BoxDetail
         box={detail}
         film={profile.film}
+        items={profile.items}
         bracket={ageBracket}
+        onBuy={buyBox}
         onClose={() => setDetail(null)}
       />
+
+      <OpenReveal
+        result={reveal}
+        boxId={revealBoxId}
+        onClose={() => setReveal(null)}
+      />
+
+      <Toast text={toast} onDone={() => setToast(null)} />
 
       <AdsForeverNotice
         visible={adsNotice}
@@ -195,14 +236,419 @@ export function Shop({ embedded = false }: { embedded?: boolean } = {}) {
 }
 
 /**
- * Shown every time the store opens, and dismissed rather than remembered.
+ * The four rarity colours at their true proportions. This is the store's
+ * whole odds story compressed into one glance: a tray is nearly all grey, the
+ * vault is mostly blue and acid. Numbers stay one tap away in the detail.
+ */
+function OddsStrip({ odds, height = 6 }: { odds: LootBox['odds']; height?: number }) {
+  return (
+    <View style={[styles.oddsStrip, { height, borderRadius: height / 2 }]}>
+      {RARITY_ORDER.map((r) =>
+        odds[r] > 0 ? (
+          <View key={r} style={{ flex: odds[r], backgroundColor: RARITY_COLOR[r] }} />
+        ) : null,
+      )}
+    </View>
+  );
+}
+
+/** The colour legend, once per shelf rather than once per tile. */
+function RarityKey() {
+  return (
+    <View style={styles.rarityKey}>
+      {RARITY_ORDER.map((r) => (
+        <View key={r} style={styles.rarityKeyItem}>
+          <View style={[styles.rarityDot, { backgroundColor: RARITY_COLOR[r] }]} />
+          <Mono style={styles.rarityKeyText}>{RARITY_LABEL[r]}</Mono>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * The paid case gets a banner of its own instead of a slot in the grid.
  *
- * The rest of the shop's small print is gone, moved to the Terms where it is
- * read once and not competing with the thing being sold. This one stayed for a
- * specific reason: it is the only consequence of a purchase here that is
- * **permanent and cannot be undone**, and a consequence like that belongs in
- * front of the player at the moment of spending, not in a document accepted
- * during onboarding.
+ * It is the only thing in the store bought with money directly, and the only
+ * guaranteed outcome, and both of those facts were invisible when it sat in
+ * the same 156px tile as a 1,000 FILM tray.
+ */
+function FeaturedCase({ box, onOpen }: { box: LootBox; onOpen: () => void }) {
+  return (
+    <PressScale onPress={onOpen} haptic="light" style={styles.featured}>
+      <View style={styles.featuredArt}>
+        <CrateArt id={box.id} size={128} />
+      </View>
+      <View style={styles.featuredText}>
+        <Label tone="accent" style={{ fontSize: 9 }}>
+          GUARANTEED ELITE
+        </Label>
+        <Text style={styles.featuredName}>{box.name}</Text>
+        <View style={styles.featuredFoot}>
+          <View style={styles.featuredPrice}>
+            <Mono style={styles.featuredPriceText}>{box.price}</Mono>
+          </View>
+          <Mono style={styles.featuredCta}>SEE WHAT'S INSIDE →</Mono>
+        </View>
+      </View>
+    </PressScale>
+  );
+}
+
+/**
+ * One crate on the shelf: the art, the name, its odds at a glance, the price.
+ * The elite figure is printed because it is the number the whole ladder is
+ * about; everything finer waits in the detail.
+ */
+function BoxTile({
+  box,
+  index,
+  bracket,
+  onOpen,
+}: {
+  box: LootBox;
+  index: number;
+  bracket: '13_17' | '18_plus' | null;
+  onOpen: () => void;
+}) {
+  const blocked = boxAvailability(bracket, TEST_STORE_COUNTRY, box) !== 'available';
+  return (
+    <FadeIn index={index} delay={50} style={styles.boxWrap}>
+      <PressScale onPress={onOpen} haptic="light">
+        <View style={[styles.boxTile, blocked && { opacity: 0.55 }]}>
+          {box.tag && (
+            <View style={styles.ribbon}>
+              <Mono style={styles.ribbonText} numberOfLines={1}>
+                {box.tag}
+              </Mono>
+            </View>
+          )}
+          {blocked && (
+            <View style={styles.agePill}>
+              <Mono style={styles.agePillText}>18+</Mono>
+            </View>
+          )}
+          <CrateArt id={box.id} size={104} />
+          <Text style={styles.tileName} numberOfLines={1}>
+            {box.name}
+          </Text>
+          <OddsStrip odds={box.odds} />
+          <Mono
+            style={[
+              styles.eliteReadout,
+              { color: box.odds.elite > 0 ? RARITY_COLOR.elite : color.faint },
+            ]}
+          >
+            ELITE {Math.round(box.odds.elite * 100)}%
+          </Mono>
+          <View style={styles.pricePill}>
+            {box.film != null && <CosmeticPreview kind="film" size={14} />}
+            <Mono style={styles.priceText}>
+              {box.price ?? box.film?.toLocaleString()}
+            </Mono>
+          </View>
+        </View>
+      </PressScale>
+    </FadeIn>
+  );
+}
+
+/** HIDER / SEEKER / BOTH, so a list of item names reads as a loadout. */
+function RoleChip({ role }: { role: UtilityItem['role'] }) {
+  const label = role === 'both' ? 'ANY ROLE' : role.toUpperCase();
+  return (
+    <View style={styles.roleChip}>
+      <Mono style={styles.roleChipText}>{label}</Mono>
+    </View>
+  );
+}
+
+/**
+ * What is in the box, before you buy it.
+ *
+ * **The odds live here and this screen is reachable without spending
+ * anything.** Apple has required pre-purchase disclosure since 2017 and
+ * Google Play since 2019, and it is statutory in China and South Korea. The
+ * buy button is deliberately below the odds rather than above them.
+ *
+ * A bottom sheet rather than a centred dialog: the list is long, and a sheet
+ * that slides up from the shelf keeps the store visible behind it, so it
+ * reads as looking inside a box rather than leaving the shop.
+ */
+function BoxDetail({
+  box,
+  film,
+  items,
+  bracket,
+  onBuy,
+  onClose,
+}: {
+  box: LootBox | null;
+  film: number;
+  items: Record<string, number>;
+  bracket: '13_17' | '18_plus' | null;
+  onBuy: (box: LootBox) => void;
+  onClose: () => void;
+}) {
+  if (!box) return null;
+
+  const availability = boxAvailability(bracket, TEST_STORE_COUNTRY, box);
+  const blocked = availability !== 'available';
+  const affordable = box.film == null || film >= box.film;
+  const rows = itemOdds(box);
+
+  // Items grouped under colour-coded rarity headings, best last, so the sheet
+  // reads bottom-up the way the anticipation does.
+  const groups = RARITY_ORDER.filter((r) => box.odds[r] > 0).map((r) => ({
+    rarity: r,
+    p: box.odds[r],
+    groupItems: rows.filter(({ item }) => item.rarity === r),
+  }));
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.detailBackdrop}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+        <View style={styles.detailCard}>
+          <View style={styles.grabber} />
+          <View style={styles.detailHead}>
+            <View style={styles.detailHeadArt}>
+              <CrateArt id={box.id} size={84} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.detailName}>{box.name}</Text>
+              <Body style={styles.detailBlurb}>{box.blurb}</Body>
+            </View>
+            <PressScale onPress={onClose} style={{ padding: space(1) }}>
+              <Mono style={styles.detailClose}>✕</Mono>
+            </PressScale>
+          </View>
+
+          <OddsStrip odds={box.odds} height={10} />
+          <View style={styles.oddsLegend}>
+            {RARITY_ORDER.filter((r) => box.odds[r] > 0).map((r) => (
+              <View key={r} style={styles.oddsLegendItem}>
+                <View style={[styles.rarityDot, { backgroundColor: RARITY_COLOR[r] }]} />
+                <Mono style={styles.oddsLegendText}>
+                  {RARITY_LABEL[r]}{' '}
+                  {(box.odds[r] * 100).toFixed(box.odds[r] < 0.01 ? 1 : 0)}%
+                </Mono>
+              </View>
+            ))}
+          </View>
+
+          <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator>
+            {groups.map(({ rarity, groupItems }) => (
+              <View key={rarity} style={{ marginTop: space(3) }}>
+                <View style={styles.groupHead}>
+                  <View style={[styles.rarityDot, { backgroundColor: RARITY_COLOR[rarity] }]} />
+                  <Mono style={[styles.groupHeadText, { color: RARITY_COLOR[rarity] }]}>
+                    {RARITY_LABEL[rarity]}
+                  </Mono>
+                  <View style={[styles.groupRule, { backgroundColor: color.line }]} />
+                </View>
+                {groupItems.map(({ item, p }) => (
+                  <View key={item.id} style={styles.itemRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={styles.itemRowTop}>
+                        <Mono style={styles.itemRowName} numberOfLines={1}>
+                          {item.name}
+                        </Mono>
+                        <RoleChip role={item.role} />
+                        {(items[item.id] ?? 0) > 0 && (
+                          <Mono style={styles.ownedMark}>OWNED</Mono>
+                        )}
+                      </View>
+                      <Body style={styles.itemRowBlurb} numberOfLines={2}>
+                        {item.blurb}
+                      </Body>
+                    </View>
+                    <Mono style={styles.oddsPct}>{(p * 100).toFixed(2)}%</Mono>
+                  </View>
+                ))}
+              </View>
+            ))}
+
+            <Mono style={styles.detailFoot}>
+              ONE ITEM PER OPEN · DUPLICATES REFUND FILM · ODDS NEVER IMPROVE ·
+              ONE ITEM USABLE PER ROUND
+            </Mono>
+          </ScrollView>
+
+          <View style={{ marginTop: space(4) }}>
+            {blocked ? (
+              <View style={styles.detailBlocked}>
+                <Mono style={styles.detailBlockedText}>
+                  {availability === 'blocked_age'
+                    ? 'RANDOM ITEMS ARE 18 AND OVER'
+                    : 'NOT AVAILABLE IN YOUR REGION'}
+                </Mono>
+              </View>
+            ) : (
+              <Btn
+                title={box.price ?? `Open for ${box.film?.toLocaleString()} FILM`}
+                disabled={!affordable}
+                sub={!affordable ? 'not enough FILM' : undefined}
+                onPress={() => onBuy(box)}
+              />
+            )}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/**
+ * The open, staged: the crate rattles, the lid bursts with a flash, the item
+ * card springs up in its rarity's colour.
+ *
+ * Two rules learned the hard way in this codebase:
+ *
+ * - **Timers drive the stages, animation only decorates them.** A throttled
+ *   web frame loop freezes Animated mid-flight (see CountUp), so if the
+ *   sequence depended on an animation callback it could hang on the rattling
+ *   crate forever. setTimeout still fires; the reveal always arrives.
+ * - **A tap anywhere skips to the end.** Nobody gets to make the player watch
+ *   a second-long animation for the two-hundredth crate.
+ */
+function OpenReveal({
+  result,
+  boxId,
+  onClose,
+}: {
+  result: OpenBoxResult | null;
+  boxId: string;
+  onClose: () => void;
+}) {
+  const [stage, setStage] = useState<'rattle' | 'burst'>('rattle');
+  const rattle = useRef(new Animated.Value(0)).current;
+  const flash = useRef(new Animated.Value(0)).current;
+  const card = useRef(new Animated.Value(0)).current;
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const toBurst = () => {
+    timers.current.forEach(clearTimeout);
+    rattle.stopAnimation();
+    rattle.setValue(0);
+    setStage('burst');
+    Animated.sequence([
+      Animated.timing(flash, { toValue: 1, duration: 90, useNativeDriver: true }),
+      Animated.timing(flash, { toValue: 0, duration: 500, useNativeDriver: true }),
+    ]).start();
+    Animated.spring(card, {
+      toValue: 1,
+      friction: 6,
+      tension: 90,
+      useNativeDriver: true,
+    }).start(() => card.setValue(1));
+  };
+
+  useEffect(() => {
+    if (!result) return;
+    setStage('rattle');
+    rattle.setValue(0);
+    flash.setValue(0);
+    card.setValue(0);
+    // An accelerating wobble: three swings, each faster than the last.
+    Animated.sequence(
+      [220, 160, 110, 80, 60, 45].map((ms, i) =>
+        Animated.timing(rattle, {
+          toValue: i % 2 === 0 ? 1 : -1,
+          duration: ms,
+          useNativeDriver: true,
+        }),
+      ),
+    ).start();
+    timers.current = [setTimeout(toBurst, 850)];
+    return () => timers.current.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  if (!result) return null;
+  const { item, refund, duplicate } = result;
+  const tint = RARITY_COLOR[item.rarity];
+  const shown = stage === 'burst';
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable
+        style={styles.revealBackdrop}
+        onPress={() => (shown ? onClose() : toBurst())}
+      >
+        {/* Rarity glow, blooming with the card. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.revealGlow,
+            { backgroundColor: tint, opacity: card.interpolate({ inputRange: [0, 1], outputRange: [0, 0.14] }) },
+          ]}
+        />
+
+        <Animated.View
+          style={[
+            styles.revealArt,
+            {
+              transform: [
+                { translateX: rattle.interpolate({ inputRange: [-1, 1], outputRange: [-5, 5] }) },
+                { rotate: rattle.interpolate({ inputRange: [-1, 1], outputRange: ['-3deg', '3deg'] }) },
+                { scale: card.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) },
+              ],
+            },
+          ]}
+        >
+          <CrateArt id={boxId} size={150} open={shown} />
+        </Animated.View>
+
+        <Animated.View
+          style={{
+            alignSelf: 'stretch',
+            opacity: card,
+            transform: [
+              { translateY: card.interpolate({ inputRange: [0, 1], outputRange: [36, 0] }) },
+              { scale: card.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) },
+            ],
+          }}
+        >
+          <View style={[styles.revealCard, { borderColor: tint }]}>
+            <Mono style={[styles.revealRarity, { color: tint }]}>
+              {RARITY_LABEL[item.rarity]}
+            </Mono>
+            <Text style={styles.revealName}>{item.name}</Text>
+            <View style={{ alignSelf: 'center', marginTop: space(2) }}>
+              <RoleChip role={item.role} />
+            </View>
+            <Body style={styles.revealBlurb}>{item.blurb}</Body>
+            {duplicate && (
+              <Mono style={styles.revealDupe}>
+                ALREADY OWNED · +{refund.toLocaleString()} FILM BACK
+              </Mono>
+            )}
+          </View>
+          <Btn
+            title="Collect"
+            style={{ alignSelf: 'stretch', marginTop: space(6) }}
+            onPress={onClose}
+          />
+        </Animated.View>
+
+        {/* The burst. On top of everything, gone in half a second. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: tint, opacity: flash.interpolate({ inputRange: [0, 1], outputRange: [0, 0.85] }) },
+          ]}
+        />
+      </Pressable>
+    </Modal>
+  );
+}
+
+/**
+ * Shown every time the store opens until dismissed for good. It is the only
+ * consequence of a purchase here that is permanent and cannot be undone, so
+ * it belongs in front of the player at the moment of spending.
  */
 function AdsForeverNotice({
   visible,
@@ -251,155 +697,6 @@ function AdsForeverNotice({
           <PressScale onPress={onNeverAgain}>
             <Mono style={styles.noticeNever}>DON'T SHOW THIS AGAIN</Mono>
           </PressScale>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-/**
- * One box, with its odds one tap away.
- *
- * **The odds have to be reachable before the purchase, not after.** Apple has
- * required that since 2017 and Google Play since 2019, and it is statutory in
- * China and South Korea. Putting the table behind a tap is fine; putting it
- * behind the transaction is not. See monetization/LOOT-BOXES.md.
- */
-/**
- * One box in the grid: the art, the name, the price. Nothing else.
- *
- * The previous version put the blurb, the elite percentage, an odds toggle, and
- * a buy button on every row, which meant five boxes filled the screen with
- * small print and none of them looked like an object you might want. A shop
- * shelf shows you the thing and its price; everything else belongs behind the
- * tap.
- */
-function BoxTile({ box, index, onOpen }: { box: LootBox; index: number; onOpen: () => void }) {
-  return (
-    <FadeIn index={index} delay={50}>
-      <PressScale onPress={onOpen} haptic="light">
-        <View style={styles.boxTile}>
-          {box.tag && (
-            <View style={styles.ribbon}>
-              <Mono style={styles.ribbonText} numberOfLines={1}>
-                {box.tag}
-              </Mono>
-            </View>
-          )}
-          <CrateArt id={box.id} size={104} />
-          <Text style={styles.tileName} numberOfLines={1}>
-            {box.name}
-          </Text>
-          <View style={styles.pricePill}>
-            {box.film != null && <CosmeticPreview kind="film" size={14} />}
-            <Mono style={styles.priceText}>
-              {box.price ?? box.film?.toLocaleString()}
-            </Mono>
-          </View>
-        </View>
-      </PressScale>
-    </FadeIn>
-  );
-}
-
-/**
- * What is in the box, before you buy it.
- *
- * **The odds live here and this screen is reachable without spending anything.**
- * Apple has required pre-purchase disclosure since 2017 and Google Play since
- * 2019, and it is statutory in China and South Korea. Putting the table one tap
- * away is fine. Putting it behind the transaction is not, so the buy button is
- * deliberately below the odds rather than above them.
- */
-function BoxDetail({
-  box,
-  film,
-  bracket,
-  onClose,
-}: {
-  box: LootBox | null;
-  film: number;
-  bracket: '13_17' | '18_plus' | null;
-  onClose: () => void;
-}) {
-  if (!box) return null;
-
-  const availability = boxAvailability(bracket, null, box);
-  const blocked = availability !== 'available';
-  const affordable = box.film == null || film >= box.film;
-  const rows = itemOdds(box);
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.detailBackdrop}>
-        <View style={styles.detailCard}>
-          <View style={styles.detailHead}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.detailName}>{box.name}</Text>
-              <Mono style={styles.detailBlurb}>{box.blurb}</Mono>
-            </View>
-            <PressScale onPress={onClose}>
-              <Mono style={styles.detailClose}>CLOSE</Mono>
-            </PressScale>
-          </View>
-
-          <View style={styles.detailArt}>
-            <CrateArt id={box.id} size={132} />
-          </View>
-
-          <ScrollView style={{ maxHeight: 260 }} showsVerticalScrollIndicator>
-            <Mono style={styles.detailSection}>CHANCE BY TIER</Mono>
-            {RARITY_ORDER.map((r) => (
-              <View key={r} style={styles.oddsRow}>
-                <Mono style={styles.oddsName}>{RARITY_LABEL[r]}</Mono>
-                <Mono style={styles.oddsPct}>
-                  {(box.odds[r] * 100).toFixed(box.odds[r] > 0 && box.odds[r] < 0.01 ? 1 : 0)}%
-                </Mono>
-              </View>
-            ))}
-
-            <Rule style={{ marginVertical: space(3) }} />
-            <Mono style={styles.detailSection}>WHAT IS IN IT</Mono>
-            {rows.map(({ item, p }) => (
-              <View key={item.id} style={styles.itemRow}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Mono style={styles.itemRowName} numberOfLines={1}>
-                    {item.name}
-                  </Mono>
-                  <Mono style={styles.itemRowBlurb} numberOfLines={2}>
-                    {item.blurb}
-                  </Mono>
-                </View>
-                <Mono style={styles.oddsPct}>{(p * 100).toFixed(2)}%</Mono>
-              </View>
-            ))}
-
-            <Mono style={styles.detailFoot}>
-              ONE ITEM PER BOX. DUPLICATES REFUND FILM. ODDS ARE PER OPEN AND DO NOT
-              IMPROVE AFTER A FAILED ATTEMPT. ONE UTILITY ITEM MAY BE USED PER ROUND.
-            </Mono>
-          </ScrollView>
-
-          <View style={{ marginTop: space(4) }}>
-            {blocked ? (
-              <View style={styles.detailBlocked}>
-                <Mono style={styles.detailBlockedText}>
-                  {availability === 'blocked_age'
-                    ? 'RANDOM ITEMS ARE 18 AND OVER'
-                    : 'NOT AVAILABLE IN YOUR REGION'}
-                </Mono>
-              </View>
-            ) : (
-              <Btn
-                title={box.price ?? `Open for ${box.film?.toLocaleString()} FILM`}
-                disabled={!affordable}
-                sub={!affordable ? 'not enough FILM' : undefined}
-                onPress={() =>
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-                }
-              />
-            )}
-          </View>
         </View>
       </View>
     </Modal>
@@ -490,82 +787,59 @@ function FrameTile({
   );
 }
 
-function ShopTile({
-  item,
-  index,
-  owned,
-  affordable,
-  onBuy,
-}: {
-  item: Cosmetic;
-  index: number;
-  owned: boolean;
-  affordable: boolean;
-  onBuy: () => boolean;
-}) {
-  const { flashOpacity, fire } = useFlash();
-  const categoryLabel = CATEGORIES.find((c) => c.key === item.category)!.label;
-
-  return (
-    <FadeIn index={index} delay={120} style={styles.tileWrap}>
-      <PressScale
-        disabled={owned || !affordable}
-        haptic="none"
-        onPress={() => {
-          if (onBuy()) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            fire();
-          }
-        }}
-        style={[
-          styles.itemCard,
-          owned && { borderColor: color.accentDim },
-          !owned && !affordable && { opacity: 0.5 },
-        ]}
-      >
-        <CosmeticPreview kind={categoryKind(item.category)} tint={item.tint} size={64} />
-        <Label tone="faint" style={{ fontSize: 8, marginTop: space(2) }}>
-          {categoryLabel}
-        </Label>
-        <Text style={styles.itemName} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <View style={styles.itemPriceRow}>
-          {owned ? (
-            <Mono style={{ fontSize: 10, color: color.accent, letterSpacing: 1 }}>OWNED</Mono>
-          ) : (
-            <>
-              <CosmeticPreview
-                kind="film"
-                size={14}
-                tint={affordable ? color.accent : color.faint}
-              />
-              <Mono
-                style={{
-                  fontSize: 12,
-                  color: affordable ? color.text : color.faint,
-                  fontFamily: font.monoSemi,
-                }}
-              >
-                {item.cost}
-              </Mono>
-            </>
-          )}
-        </View>
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.flash, { opacity: flashOpacity }]}
-        />
-      </PressScale>
-    </FadeIn>
-  );
-}
-
 const styles = StyleSheet.create({
-  // ---- loot boxes ----
-  boxGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space(3) },
+  // ---- featured case ----
+  featured: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(3),
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    borderRadius: radius.md,
+    backgroundColor: color.surface,
+    padding: space(4),
+    marginTop: space(5),
+    overflow: 'hidden',
+  },
+  featuredArt: { flexShrink: 0 },
+  featuredText: { flex: 1, minWidth: 0 },
+  featuredName: {
+    fontFamily: font.display,
+    fontSize: 20,
+    color: color.text,
+    marginTop: 3,
+  },
+  featuredBlurb: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: color.dim,
+    marginTop: 4,
+  },
+  featuredFoot: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: space(3),
+    gap: space(2),
+  },
+  featuredPrice: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 999,
+    paddingHorizontal: space(3.5),
+    paddingVertical: space(1.5),
+  },
+  featuredPriceText: { fontFamily: font.monoSemi, fontSize: 13, color: color.black },
+  featuredCta: { fontSize: 9, letterSpacing: 1.2, color: color.faint },
+
+  // ---- crate shelf ----
+  boxGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: space(3),
+  },
+  boxWrap: { width: '48.2%' },
   boxTile: {
-    width: 156,
     borderWidth: 1,
     borderColor: color.lineBright,
     borderRadius: radius.md,
@@ -586,8 +860,21 @@ const styles = StyleSheet.create({
     borderTopRightRadius: radius.sm,
     borderBottomRightRadius: radius.sm,
     maxWidth: '85%',
+    zIndex: 1,
   },
   ribbonText: { fontSize: 7, letterSpacing: 1, color: color.onAccent },
+  agePill: {
+    position: 'absolute',
+    top: space(3),
+    right: space(3),
+    borderWidth: 1,
+    borderColor: color.warn,
+    borderRadius: radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    zIndex: 1,
+  },
+  agePillText: { fontSize: 9, color: color.warn, letterSpacing: 1 },
   tileName: {
     fontFamily: font.display,
     fontSize: 12,
@@ -595,6 +882,13 @@ const styles = StyleSheet.create({
     color: color.text,
     textAlign: 'center',
   },
+  oddsStrip: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+    backgroundColor: color.line,
+  },
+  eliteReadout: { fontSize: 9, letterSpacing: 1.2 },
   pricePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -607,30 +901,68 @@ const styles = StyleSheet.create({
     paddingVertical: space(1.5),
   },
   priceText: { fontFamily: font.monoSemi, fontSize: 12, color: color.text },
+  rarityKey: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: space(4),
+    marginTop: space(3),
+  },
+  rarityKeyItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  rarityDot: { width: 8, height: 8, borderRadius: 4 },
+  rarityKeyText: { fontSize: 8, letterSpacing: 1, color: color.dim },
 
-  // ---- box detail ----
+  // ---- box detail sheet ----
   detailBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    padding: space(5),
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
   },
   detailCard: {
-    borderWidth: 1,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
     borderColor: color.lineBright,
-    borderRadius: radius.md,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
     backgroundColor: color.surface,
     padding: space(5),
+    paddingBottom: space(8),
   },
-  detailHead: { flexDirection: 'row', alignItems: 'flex-start', gap: space(3) },
-  detailName: { fontFamily: font.display, fontSize: 19, color: color.text },
-  detailBlurb: { fontSize: 11, color: color.dim, marginTop: 3, lineHeight: 16 },
-  detailClose: { fontSize: 10, letterSpacing: 1.3, color: color.faint },
-  detailArt: { alignItems: 'center', paddingVertical: space(3) },
-  detailSection: { fontSize: 8, letterSpacing: 1.5, color: color.faint, marginBottom: space(2) },
-  oddsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  oddsName: { fontSize: 10, letterSpacing: 1.2, color: color.text },
-  oddsPct: { fontSize: 11, color: color.accent, fontVariant: ['tabular-nums'] },
+  grabber: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: color.lineBright,
+    marginBottom: space(4),
+  },
+  detailHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(3),
+    marginBottom: space(4),
+  },
+  detailHeadArt: { flexShrink: 0 },
+  detailName: { fontFamily: font.display, fontSize: 20, color: color.text },
+  detailBlurb: { fontSize: 12, color: color.dim, marginTop: 3, lineHeight: 17 },
+  detailClose: { fontSize: 16, color: color.faint },
+  oddsLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space(3),
+    marginTop: space(2.5),
+    marginBottom: space(1),
+  },
+  oddsLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  oddsLegendText: { fontSize: 9, letterSpacing: 0.8, color: color.text },
+  groupHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(2),
+    marginBottom: space(1),
+  },
+  groupHeadText: { fontSize: 9, letterSpacing: 1.4 },
+  groupRule: { flex: 1, height: 1 },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -639,8 +971,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: color.line,
   },
-  itemRowName: { fontFamily: font.monoSemi, fontSize: 11, color: color.text },
-  itemRowBlurb: { fontSize: 9, color: color.faint, lineHeight: 13, marginTop: 2 },
+  itemRowTop: { flexDirection: 'row', alignItems: 'center', gap: space(2) },
+  itemRowName: { fontFamily: font.monoSemi, fontSize: 11, color: color.text, flexShrink: 1 },
+  itemRowBlurb: { fontSize: 11, color: color.dim, lineHeight: 15, marginTop: 2 },
+  roleChip: {
+    borderWidth: 1,
+    borderColor: color.line,
+    borderRadius: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  roleChipText: { fontSize: 7, letterSpacing: 1, color: color.faint },
+  oddsPct: { fontSize: 11, color: color.accent, fontVariant: ['tabular-nums'] },
   detailFoot: {
     fontSize: 8,
     letterSpacing: 1,
@@ -656,11 +998,68 @@ const styles = StyleSheet.create({
     paddingVertical: space(3.5),
   },
   detailBlockedText: { fontSize: 10, letterSpacing: 1.3, color: color.warn },
+  ownedMark: { fontSize: 7, letterSpacing: 1, color: color.accent },
+
+  // ---- open reveal ----
+  revealBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: space(6),
+  },
+  revealArt: { marginBottom: space(2) },
+  revealCard: {
+    alignSelf: 'stretch',
+    borderWidth: 1.5,
+    borderRadius: radius.md,
+    backgroundColor: color.surface,
+    padding: space(5),
+  },
+  revealRarity: {
+    fontSize: 10,
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  revealName: {
+    fontFamily: font.display,
+    fontSize: 28,
+    color: color.text,
+    textAlign: 'center',
+    marginTop: space(2),
+  },
+  revealBlurb: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: color.dim,
+    textAlign: 'center',
+    marginTop: space(3),
+  },
+  revealDupe: {
+    fontSize: 10,
+    letterSpacing: 1.2,
+    color: color.accent,
+    textAlign: 'center',
+    marginTop: space(3),
+  },
+  revealGlow: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '18%',
+    width: 420,
+    height: 420,
+    borderRadius: 210,
+  },
 
   // ---- FILM packs ----
-  packGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space(3) },
+  packGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: space(3),
+  },
+  packWrap: { width: '48.2%' },
   pack: {
-    width: 150,
     borderWidth: 1,
     borderColor: color.lineBright,
     borderRadius: radius.md,
@@ -721,53 +1120,10 @@ const styles = StyleSheet.create({
     color: color.text,
     letterSpacing: -0.5,
   },
-  storeCard: {
-    borderWidth: 1,
-    borderColor: color.lineBright,
-    borderRadius: radius.md,
-    backgroundColor: color.surface,
-    padding: space(3.5),
-    marginBottom: space(2.5),
-  },
-  storeTop: { flexDirection: 'row', gap: space(3) },
-  storeName: { fontFamily: font.display, fontSize: 19, color: color.text },
-  storeTag: {
-    fontSize: 8,
-    letterSpacing: 1.2,
-    color: color.black,
-    backgroundColor: color.accent,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
-  },
-  storeBlurb: { fontSize: 10, color: color.dim, lineHeight: 15, marginTop: 4 },
-  storeFoot: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    marginTop: space(3),
-  },
-  storeAnchor: { fontSize: 11, color: color.faint, textDecorationLine: 'line-through' },
-  storePrice: { fontFamily: font.display, fontSize: 22, color: color.accent },
-  storeCta: { fontSize: 10, letterSpacing: 1.4, color: color.accent },
-  filmNote: {
-    fontSize: 9,
-    letterSpacing: 1.1,
-    lineHeight: 14,
-    color: color.faint,
-    marginTop: space(1),
-  },
-  sectionHead: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: space(6),
-    marginBottom: space(2),
-  },
-  sectionNote: {
-    fontSize: 10,
-    lineHeight: 15,
-    color: color.faint,
+  sectionLede: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: color.dim,
     marginBottom: space(3),
   },
   frameCard: {
@@ -809,48 +1165,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: color.text,
   },
-  // The price sits in its own non-shrinking column; the left column must be
-  // allowed to shrink or long copy pushes the price off-screen.
-  passTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: space(3),
-  },
-  passTopLeft: { flex: 1, minWidth: 0 },
-  passName: {
-    fontFamily: font.display,
-    fontSize: 22,
-    color: color.text,
-    marginTop: 2,
-  },
-  price: {
-    fontFamily: font.monoSemi,
-    fontSize: 16,
-    color: color.accent,
-    flexShrink: 0,
-  },
-  viewTiers: {
-    fontSize: 10,
-    color: color.accent,
-    letterSpacing: 1.2,
-    textAlign: 'center',
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space(3),
-  },
-  tileWrap: { width: '47.5%' },
-  itemCard: {
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.line,
-    borderRadius: radius.md,
-    padding: space(3),
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
   itemName: {
     fontFamily: font.monoSemi,
     fontSize: 12,
@@ -863,14 +1177,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     marginTop: space(2),
-  },
-  flash: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: color.accent,
   },
   filmRow: {
     flexDirection: 'row',

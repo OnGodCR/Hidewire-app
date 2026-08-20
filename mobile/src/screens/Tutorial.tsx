@@ -3,8 +3,8 @@ import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { color, font, radius, space, REDUCED_MOTION } from '../theme';
-import { Body, Brackets, Btn, Label, Mono } from '../components/ui';
-import { FadeIn, PressScale } from '../components/motion';
+import { Body, Brackets, Btn, Confirm, Label, Mono, Rule } from '../components/ui';
+import { CountUp, FadeIn, PressScale } from '../components/motion';
 import { CaptureSequence } from '../components/CaptureSequence';
 import { ProceduralPhoto } from '../components/ProceduralPhoto';
 import { PermissionNote } from './Onboarding';
@@ -62,18 +62,34 @@ export function Tutorial() {
   const insets = useSafeAreaInsets();
   const [beat, setBeat] = useState<Beat>('zone');
   // BLACKED OUT is the one screen in the product that owns the whole display.
-  // Leaving the step counter sitting above it turns the most dramatic moment in
-  // the game into a form field, so a beat can ask for the chrome to get out of
-  // the way.
+  // Only WindowBeat's blacked-out state asks for the chrome to get out of the
+  // way; every other moment, the capture beat included, keeps the one shared
+  // progress header so the player always knows where they are.
   const [chrome, setChrome] = useState(true);
+  const [confirmSkip, setConfirmSkip] = useState(false);
+  // The payout moment: a dedicated full screen between the last beat and home,
+  // so the one-time 1,000 FILM lands as an event rather than a button sub.
+  const [payout, setPayout] = useState(false);
 
   const index = BEATS.indexOf(beat);
   const replay = seen.tutorialDone;
 
   const finish = () => {
+    if (replay) {
+      go('home');
+      return;
+    }
     // Paid before the flag is set, because the grant is guarded on that flag.
     claimTutorialGrant();
     markSeen({ tutorialDone: true });
+    setPayout(true);
+  };
+
+  // Skipping neither pays nor marks the tutorial done, which is what makes the
+  // consequence copy true: it really can be finished later from Profile, and
+  // the 1,000 FILM really is still waiting there.
+  const skip = () => {
+    setConfirmSkip(false);
     go('home');
   };
 
@@ -83,20 +99,22 @@ export function Tutorial() {
     else setBeat(BEATS[i + 1]);
   };
 
-  // The capture beat renders full bleed and owns the whole screen, so it sits
-  // outside the chrome rather than inside it.
-  if (beat === 'capture') {
-    return <CaptureBeat onPass={next} onSkip={next} />;
+  if (payout) {
+    return <PayoutMoment onDone={() => go('home')} />;
   }
+
+  const stepLabel = replay
+    ? `How to play, ${index + 1} of ${BEATS.length}`
+    : `Step 5 of 5 · How to play, ${index + 1} of ${BEATS.length}`;
 
   return (
     <View style={styles.screen}>
       {chrome && (
       <View style={{ paddingTop: insets.top + space(4), paddingHorizontal: space(6) }}>
         <View style={styles.headRow}>
-          <Label>{replay ? 'How to play' : 'Step 5 of 5'}</Label>
-          {!replay && index === 0 && (
-            <PressScale onPress={finish}>
+          <Label>{stepLabel}</Label>
+          {!replay && (
+            <PressScale onPress={() => setConfirmSkip(true)}>
               <Mono style={styles.skip}>SKIP</Mono>
             </PressScale>
           )}
@@ -123,9 +141,58 @@ export function Tutorial() {
 
       {beat === 'zone' && <ZoneBeat onDone={next} />}
       {beat === 'window' && <WindowBeat onDone={next} onChrome={setChrome} />}
+      {beat === 'capture' && <CaptureBeat onPass={next} onSkip={next} />}
       {beat === 'seeker' && (
         <SeekerBeat handle={profile.handle} reward={replay ? 0 : ECONOMY.tutorialGrant} onDone={finish} />
       )}
+
+      <Confirm
+        visible={confirmSkip}
+        title="Skip the tutorial?"
+        body="You can finish it any time from Profile, under How to play. The 1,000 FILM for finishing is still waiting when you do."
+        confirmLabel="Skip for now"
+        onConfirm={skip}
+        onCancel={() => setConfirmSkip(false)}
+      />
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The payout moment
+// ---------------------------------------------------------------------------
+
+/**
+ * The tutorial grant, paid on screen rather than in passing.
+ *
+ * By the time this renders the FILM is already credited (finish() claims it
+ * before flipping the flag), so the number counting up is the balance the
+ * player will find on the home screen, not a promise of one.
+ */
+function PayoutMoment({ onDone }: { onDone: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [shown, setShown] = useState(0);
+
+  useEffect(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const t = setTimeout(() => setShown(ECONOMY.tutorialGrant), 350);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <View style={styles.screen}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space(6) }}>
+        <Brackets size={20} thickness={2.5} inset={-22} tint={color.accent}>
+          <CountUp value={shown} duration={900} style={styles.payoutNum} />
+        </Brackets>
+        <Label tone="accent" size={12} style={{ marginTop: space(7) }}>
+          Film granted
+        </Label>
+        <Body style={styles.payoutBody}>Yours. Spend it in the store.</Body>
+      </View>
+      <View style={{ padding: space(6), paddingBottom: insets.bottom + space(6) }}>
+        <Btn title="Start playing" sub="YOUR FIRST ROUND IS ON THE HOME SCREEN" onPress={onDone} />
+      </View>
     </View>
   );
 }
@@ -242,7 +309,7 @@ function ZoneBeat({ onDone }: { onDone: () => void }) {
       </View>
 
       <View style={{ paddingHorizontal: space(6), paddingBottom: insets.bottom + space(6) }}>
-        <Mono style={[styles.instruction, inside && { color: color.accent }]}>
+        <Mono style={[styles.instruction, !inside && { color: color.accent }]}>
           {inside ? 'INSIDE THE ZONE. THAT IS WHERE YOU PLAY.' : 'DRAG YOUR PIN INSIDE THE CIRCLE'}
         </Mono>
         <Btn title="Next" disabled={!inside} onPress={onDone} style={{ marginTop: space(4) }} />
@@ -404,7 +471,7 @@ function WindowBeat({
         {state === 'hit' ? (
           <Btn title="Now do it for real" onPress={onDone} />
         ) : (
-          <Mono style={styles.instruction}>
+          <Mono style={[styles.instruction, state === 'open' && { color: color.accent }]}>
             {state === 'open' ? 'TAP CHECK IN BEFORE THE CLOCK RUNS OUT' : 'WAIT FOR IT'}
           </Mono>
         )}
@@ -455,27 +522,34 @@ function CaptureBeat({ onPass, onSkip }: { onPass: () => void; onSkip: () => voi
 
   if (phase === 'brief') {
     return (
-      <View style={[styles.screen, { paddingTop: insets.top + space(6) }]}>
-        <View style={{ flex: 1, paddingHorizontal: space(6) }}>
-          <Label tone="accent">Beat 3 of 4</Label>
+      <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, paddingHorizontal: space(6), paddingTop: space(4) }}>
           <Text style={styles.h1}>Your first real check-in.</Text>
           <Body style={styles.lede}>
-            Back camera, then front. {PRACTICE_WINDOW} seconds, exactly like a real
-            round. Nothing is at stake here, so let the timer run out on purpose if
-            you want to see what that costs.
+            Back camera, then front. {PRACTICE_WINDOW} seconds. Nothing at stake.
           </Body>
-          <Mono style={styles.brief}>
-            THE BACK FRAME SHOWS YOUR HIDING PLACE.{'\n'}
-            THE FRONT FRAME PROVES SOMEBODY IS BEHIND THE PHONE.{'\n'}
-            NEITHER IS SCORED. NEITHER IS RUN THROUGH FACE DETECTION, EVER.
-          </Mono>
-          <View style={{ marginTop: space(6) }}>
+          <View style={{ marginTop: space(5) }}>
+            <BriefRow name="BACK FRAME" note="Shows your hiding place." />
+            <BriefRow name="FRONT FRAME" note="Proves somebody is behind the phone." />
+            <Rule style={{ marginTop: space(4) }} />
+            {/* The face-detection promise is the one legal line in this brief,
+                so it stands apart from the mechanics above it. */}
+            <Label tone="accent" size={11} style={{ marginTop: space(3.5), lineHeight: 17 }}>
+              Neither is scored. Neither is run through face detection, ever.
+            </Label>
+          </View>
+          <View style={{ marginTop: space(5) }}>
             <PermissionNote perm="camera" />
           </View>
         </View>
         <View style={{ padding: space(6), paddingBottom: insets.bottom + space(6), gap: space(2) }}>
           <Btn title="Open the camera" onPress={() => setPhase('run')} />
-          <Btn title="I'll do this outside" variant="ghost" onPress={onSkip} />
+          <Btn
+            title="I'll do this outside"
+            variant="ghost"
+            sub="YOU CAN REDO THIS ANY TIME FROM PROFILE"
+            onPress={onSkip}
+          />
         </View>
       </View>
     );
@@ -483,7 +557,7 @@ function CaptureBeat({ onPass, onSkip }: { onPass: () => void; onSkip: () => voi
 
   if (phase === 'expired') {
     return (
-      <View style={styles.blackScreen}>
+      <View style={[styles.blackScreen, { marginTop: space(2) }]}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={styles.blackoutTitle}>BLACKED{'\n'}OUT</Text>
           <View style={styles.blackoutBar} />
@@ -507,20 +581,35 @@ function CaptureBeat({ onPass, onSkip }: { onPass: () => void; onSkip: () => voi
   }
 
   return (
-    <CaptureSequence
-      eyebrow="First check-in"
-      remaining={left}
-      onValidated={() => {
-        passed.current = true;
-        markSeen({ practised: true });
-      }}
-      validatingNote="Practice run. The same checks, none of the consequences."
-      doneTitle="That would have counted."
-      doneNote="IN A REAL ROUND BOTH FRAMES WOULD NOW BE IN THE SEEKER'S FEED."
-      doneCta="See what the seeker sees"
-      onDone={onPass}
-      onRetry={(extra) => setLeft((n) => n + extra)}
-    />
+    <View style={{ flex: 1 }}>
+      <CaptureSequence
+        eyebrow="First check-in"
+        remaining={left}
+        onValidated={() => {
+          passed.current = true;
+          markSeen({ practised: true });
+        }}
+        validatingNote="Practice run. The same checks, none of the consequences."
+        doneTitle="That would have counted."
+        doneNote="IN A REAL ROUND BOTH FRAMES WOULD NOW BE IN THE SEEKER'S FEED."
+        doneCta="See what the seeker sees"
+        onDone={onPass}
+        onRetry={(extra) => setLeft((n) => n + extra)}
+      />
+    </View>
+  );
+}
+
+/** A permRow-shaped fact: diamond tick, machine name, one-line note. */
+function BriefRow({ name, note }: { name: string; note: string }) {
+  return (
+    <View style={styles.briefRow}>
+      <View style={styles.briefTick} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.briefName}>{name}</Text>
+        <Mono style={{ fontSize: 11, marginTop: 2, lineHeight: 16 }}>{note}</Mono>
+      </View>
+    </View>
   );
 }
 
@@ -554,8 +643,7 @@ function SeekerBeat({
       <View style={{ paddingHorizontal: space(6), paddingTop: space(4) }}>
         <Text style={styles.h1}>The seeker sees everything.</Text>
         <Body style={styles.lede}>
-          Every frame you send lands in their feed within seconds. They cannot see
-          where you are between reveals, but they can see what is behind you.
+          Every photo you send lands in their feed. Watch what is behind you.
         </Body>
       </View>
 
@@ -594,8 +682,8 @@ function SeekerBeat({
 
       <View style={{ paddingHorizontal: space(6), paddingBottom: insets.bottom + space(6) }}>
         <Btn
-          title="Start playing"
-          sub={reward > 0 ? `+${reward.toLocaleString()} FILM FOR FINISHING` : undefined}
+          title={reward > 0 ? 'Finish' : 'Done'}
+          sub={reward > 0 ? `${reward.toLocaleString()} FILM WAITING` : undefined}
           onPress={onDone}
         />
       </View>
@@ -611,7 +699,8 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', gap: space(2), marginTop: space(3) },
   dot: {
     flex: 1,
-    height: 2,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: color.line,
   },
   dotOn: { backgroundColor: color.accent },
@@ -644,11 +733,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   instruction: {
-    fontSize: 10,
-    letterSpacing: 1.4,
-    color: color.faint,
+    fontSize: 12,
+    letterSpacing: 1.1,
+    color: color.dim,
     textAlign: 'center',
-    lineHeight: 16,
+    lineHeight: 18,
   },
   waiting: { fontSize: 12, letterSpacing: 2, color: color.faint },
   bigClock: {
@@ -687,12 +776,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 16,
   },
-  brief: {
-    fontSize: 10,
-    letterSpacing: 1.2,
-    color: color.faint,
-    lineHeight: 18,
-    marginTop: space(6),
+  briefRow: {
+    flexDirection: 'row',
+    gap: space(3),
+    paddingVertical: space(3),
+    borderBottomWidth: 1,
+    borderBottomColor: color.line,
+  },
+  briefTick: {
+    width: 8,
+    height: 8,
+    backgroundColor: color.accent,
+    marginTop: 5,
+    transform: [{ rotate: '45deg' }],
+  },
+  briefName: {
+    fontFamily: font.monoSemi,
+    fontSize: 13,
+    letterSpacing: 2,
+    color: color.text,
+  },
+  payoutNum: {
+    fontFamily: font.numeral,
+    fontSize: 64,
+    color: color.text,
+    fontVariant: ['tabular-nums'],
+  },
+  payoutBody: {
+    color: color.dim,
+    textAlign: 'center',
+    marginTop: space(4),
+    lineHeight: 22,
   },
   blackoutTitle: {
     fontFamily: font.blackout,

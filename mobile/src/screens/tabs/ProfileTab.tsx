@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { color, font, radius, space } from '../../theme';
-import { Bar, Card, Label, Mono } from '../../components/ui';
+import { Bar, Body, Btn, Card, Display, Label, Mono } from '../../components/ui';
 import { AvatarMark, CosmeticPreview } from '../../components/Cosmetics';
 import { FadeIn, PressScale } from '../../components/motion';
 import { useGame } from '../../engine/GameContext';
@@ -16,6 +16,7 @@ import { TEST_MODE } from '../../config';
 export function ProfileTab() {
   const { go, profile, pass, auth, hasAccount, ageBracket, resetProgress, daily } = useGame();
   const eq = profile.equipped;
+  const eqTitle = byId(eq.title);
   const owned = COSMETICS.filter((c) => profile.owned.includes(c.id));
 
   const stats = [
@@ -30,7 +31,13 @@ export function ProfileTab() {
       contentContainerStyle={{ padding: space(5), paddingBottom: space(8) }}
       showsVerticalScrollIndicator={false}
     >
-      {/* ---- loadout preview ---- */}
+      <FadeIn>
+        <Display style={{ marginBottom: space(3) }}>Profile</Display>
+      </FadeIn>
+
+      {/* ---- loadout preview ----
+          The handle already sits in the IdentityBar directly above this tab,
+          so the hero leads with the equipped title instead of repeating it. */}
       <FadeIn>
         <Card style={styles.hero}>
           <AvatarMark
@@ -39,8 +46,11 @@ export function ProfileTab() {
             frameTint={byId(eq.frame)?.tint ?? color.accent}
           />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.name} numberOfLines={1}>
-              {profile.handle || 'PLAYER'}
+            <Text
+              style={[styles.name, { color: eqTitle?.tint ?? color.text }]}
+              numberOfLines={1}
+            >
+              {eqTitle?.name ?? 'NO TITLE'}
             </Text>
             <Mono style={styles.kind}>
               {hasAccount ? (auth?.kind ?? 'account').toUpperCase() : 'GUEST'}
@@ -55,6 +65,27 @@ export function ProfileTab() {
         </Card>
       </FadeIn>
 
+      {/* ---- guest promotion ----
+          Promoted out of the settings list: a guest whose progress can vanish
+          with the phone should not learn that from a row of settings. */}
+      {!hasAccount && (
+        <FadeIn index={1}>
+          <Card style={styles.block}>
+            <Label tone="accent">Guest account</Label>
+            <Body style={{ color: color.dim, marginTop: space(2), fontSize: 14, lineHeight: 20 }}>
+              Your progress lives on this phone only. Lose the phone, lose the
+              progress.
+            </Body>
+            <Btn
+              title="Create an account"
+              variant="outline"
+              style={{ marginTop: space(3) }}
+              onPress={() => go('auth')}
+            />
+          </Card>
+        </FadeIn>
+      )}
+
       {/* ---- XP ---- */}
       <FadeIn index={1}>
         <Card style={styles.block}>
@@ -66,12 +97,22 @@ export function ProfileTab() {
             <Bar value={profile.xp} height={6} />
           </View>
           <View style={styles.statGrid}>
-            {stats.map((s) => (
-              <View key={s.k} style={styles.stat}>
-                <Mono style={styles.statK}>{s.k}</Mono>
-                <Text style={styles.statV}>{s.v}</Text>
-              </View>
-            ))}
+            {stats.map((s) =>
+              s.k === 'PASS TIER' ? (
+                <View key={s.k} style={styles.stat}>
+                  <PressScale onPress={() => go('pass')}>
+                    <Mono style={styles.statK}>{s.k}</Mono>
+                    <Text style={styles.statV}>{s.v}</Text>
+                    <Mono style={styles.statLink}>VIEW THE PASS →</Mono>
+                  </PressScale>
+                </View>
+              ) : (
+                <View key={s.k} style={styles.stat}>
+                  <Mono style={styles.statK}>{s.k}</Mono>
+                  <Text style={styles.statV}>{s.v}</Text>
+                </View>
+              ),
+            )}
           </View>
         </Card>
       </FadeIn>
@@ -84,16 +125,29 @@ export function ProfileTab() {
             {owned.length} / {COSMETICS.length}
           </Mono>
         </View>
-        <View style={styles.ownedGrid}>
-          {owned.map((c) => (
-            <View key={c.id} style={styles.ownedTile}>
-              <CosmeticPreview kind={categoryKind(c.category)} tint={c.tint} size={40} />
-              <Mono style={styles.ownedName} numberOfLines={1}>
-                {c.name}
-              </Mono>
-            </View>
-          ))}
-        </View>
+        {owned.length === 0 ? (
+          <Card>
+            <Body style={{ color: color.dim, fontSize: 14, lineHeight: 20 }}>
+              Nothing yet. Everything you buy or earn lands here.
+            </Body>
+            <PressScale onPress={() => go('shop')} style={{ marginTop: space(3) }}>
+              <View style={styles.editBtn}>
+                <Mono style={styles.editText}>BROWSE THE STORE →</Mono>
+              </View>
+            </PressScale>
+          </Card>
+        ) : (
+          <View style={styles.ownedGrid}>
+            {owned.map((c) => (
+              <View key={c.id} style={styles.ownedTile}>
+                <CosmeticPreview kind={categoryKind(c.category)} tint={c.tint} size={40} />
+                <Mono style={styles.ownedName} numberOfLines={1}>
+                  {c.name}
+                </Mono>
+              </View>
+            ))}
+          </View>
+        )}
       </FadeIn>
 
       {/* ---- settings ---- */}
@@ -104,9 +158,6 @@ export function ProfileTab() {
         <Card style={{ padding: 0 }}>
           <SettingRow label="How to play" onPress={() => go('tutorial')} />
           <SettingRow label="How to read the map" onPress={() => go('mapTutorial')} />
-          {!hasAccount && (
-            <SettingRow label="Create an account" onPress={() => go('auth')} accent />
-          )}
         </Card>
       </FadeIn>
 
@@ -128,19 +179,13 @@ export function ProfileTab() {
   );
 }
 
-function SettingRow({
-  label,
-  onPress,
-  accent,
-}: {
-  label: string;
-  onPress: () => void;
-  accent?: boolean;
-}) {
+function SettingRow({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <PressScale onPress={onPress}>
       <View style={styles.settingRow}>
-        <Mono style={[styles.settingLabel, accent && { color: color.accent }]}>{label}</Mono>
+        {/* A settings row is a sentence a person wrote, so it gets the human
+            face. The chevron is furniture and stays mono. */}
+        <Text style={styles.settingLabel}>{label}</Text>
         <Mono style={styles.chev}>›</Mono>
       </View>
     </PressScale>
@@ -165,6 +210,7 @@ const styles = StyleSheet.create({
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space(4) },
   stat: { width: '50%', paddingVertical: space(1.5) },
   statK: { fontSize: 8, letterSpacing: 1.3, color: color.faint },
+  statLink: { fontSize: 8, letterSpacing: 1, color: color.accent, marginTop: 3 },
   statV: { fontFamily: font.display, fontSize: 20, color: color.text, marginTop: 2 },
   sectionHead: {
     flexDirection: 'row',
@@ -194,7 +240,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: color.line,
   },
-  settingLabel: { fontSize: 12, color: color.text },
+  settingLabel: { fontFamily: font.displayMed, fontSize: 15, color: color.text },
   chev: { fontSize: 16, color: color.faint },
   reset: {
     fontSize: 9,

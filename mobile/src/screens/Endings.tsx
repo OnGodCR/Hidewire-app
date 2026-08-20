@@ -3,15 +3,20 @@ import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { color, font, radius, space } from '../theme';
-import { Bar, Btn, Card, Label, Mono, Rule } from '../components/ui';
+import { Bar, Body, Btn, Card, Label, Mono, Rule } from '../components/ui';
 import { FadeIn, PressScale } from '../components/motion';
 import { AvatarMark } from '../components/Cosmetics';
-import { useGame, SEEKER_BOT, ROUND_DISPLAY_MINUTES } from '../engine/GameContext';
+import {
+  useGame,
+  SEEKER_BOT,
+  ROUND_DISPLAY_MINUTES,
+  fmtClock,
+} from '../engine/GameContext';
 
 // ---------- blackout (missed check-in) ----------
 
 export function Blackout() {
-  const { go } = useGame();
+  const { go, round } = useGame();
   const insets = useSafeAreaInsets();
   const glitch = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -42,15 +47,15 @@ export function Blackout() {
           BLACKED{'\n'}OUT
         </Animated.Text>
         <View style={styles.blackoutBar} />
-        <Mono style={styles.blackoutNote}>
-          YOU MISSED THE CHECK-IN WINDOW.{'\n'}THE PARTY HAS BEEN NOTIFIED.
-        </Mono>
-        <Mono style={[styles.blackoutNote, { color: color.faint, marginTop: space(3) }]}>
-          WORSE THAN BEING TAGGED. EVERYONE KNOWS.
-        </Mono>
+        <Body style={styles.blackoutBody}>
+          You missed the check-in window at {fmtClock(round?.elapsed ?? 0)}.
+        </Body>
+        <Body style={[styles.blackoutBody, { color: color.dim, marginTop: space(2) }]}>
+          The round keeps going without you.
+        </Body>
       </View>
       <View style={{ padding: space(6), paddingBottom: insets.bottom + space(6) }}>
-        <Btn title="See results" variant="ghost" onPress={() => go('results')} />
+        <Btn title="See results" onPress={() => go('results')} />
       </View>
     </View>
   );
@@ -68,9 +73,12 @@ export function Results() {
     if (!round) return null;
     const frac = Math.min(1, round.elapsed / round.totalReal);
     const survivedMin = Math.round(ROUND_DISPLAY_MINUTES * frac);
+    // MVP and subtitle derive from the round's actual roster rather than a
+    // hardcoded name, so they cannot contradict what the player just watched.
+    const survivors = round.bots.filter((b) => b.state === 'alive').map((b) => b.name);
     if (round.role === 'hider') {
       const survived = round.outcome === 'survived';
-      const checkins = round.checkinsPassed + 3;
+      const checkins = round.checkinsPassed;
       const lines = [
         { k: `SURVIVAL · ${survivedMin} MIN`, v: survivedMin },
         { k: `CHECK-INS PASSED · ${checkins} × 5`, v: checkins * 5 },
@@ -81,11 +89,13 @@ export function Results() {
         win: survived,
         title: survived ? 'SURVIVED' : 'BLACKED OUT',
         subtitle: survived
-          ? `You outlasted ${SEEKER_BOT.name}. JULES survived too.`
+          ? `You outlasted ${SEEKER_BOT.name}.${
+              survivors.length > 0 ? ` ${survivors.join(' and ')} survived too.` : ''
+            }`
           : 'Check-in window expired with no valid submission.',
         lines,
         total: lines.reduce((a, l) => a + l.v, 0),
-        mvp: survived ? profile.handle || 'YOU' : 'JULES',
+        mvp: survived ? profile.handle || 'YOU' : (survivors[0] ?? SEEKER_BOT.name),
         xp: survived ? 0.24 : 0.08,
       };
     }
@@ -106,7 +116,7 @@ export function Results() {
         : 'The timer beat you. Surviving hiders win.',
       lines,
       total: lines.reduce((a, l) => a + l.v, 0),
-      mvp: cleared ? profile.handle || 'YOU' : 'JULES',
+      mvp: cleared ? profile.handle || 'YOU' : (survivors[0] ?? (profile.handle || 'YOU')),
       xp: cleared ? 0.28 : 0.1,
     };
   }, [round == null]);
@@ -297,6 +307,14 @@ const styles = StyleSheet.create({
     height: 3,
     backgroundColor: color.danger,
     marginTop: space(5),
+  },
+  blackoutBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: color.text,
+    textAlign: 'center',
+    marginTop: space(5),
+    paddingHorizontal: space(8),
   },
   blackoutNote: {
     fontFamily: font.monoMed,

@@ -37,7 +37,21 @@ export const TEST_MODE_CONTROLS = [
   'The rival seeker bid in the lobby',
   'Store and bundle purchases granting for free with no payment provider',
   'The scripted round timeline speed multiplier',
+  'The pretend storefront country (US) that lets the crate shelf open at all',
 ] as const;
+
+/**
+ * The storefront country the demo pretends the player buys from.
+ *
+ * `boxAvailability()` fails closed on an unknown country, which is correct:
+ * with no payment provider there is no real storefront, so nothing should be
+ * purchasable. But it also means the whole crate shelf renders as
+ * region-blocked in the demo, which makes the store impossible to design or
+ * playtest. This fixture exists only for that. Outside TEST_MODE it is null
+ * and the fail-closed behaviour is back in charge; the real value must come
+ * from the payment provider's storefront, never from IP or GPS.
+ */
+export const TEST_STORE_COUNTRY: string | null = TEST_MODE ? 'US' : null;
 
 /**
  * True only in a development bundle. `__DEV__` is injected by Metro.

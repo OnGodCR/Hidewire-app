@@ -15,6 +15,7 @@ import { color, font, radius, space } from '../theme';
 import { Body, Btn, Label, Mono } from '../components/ui';
 import { FadeIn } from '../components/motion';
 import { Doc, PRIVACY, TERMS } from '../data/legal';
+import { TEST_MODE } from '../config';
 import { useGame } from '../engine/GameContext';
 import { useScrollGate } from '../components/useScrollGate';
 
@@ -49,8 +50,14 @@ export function LegalGate() {
   return (
     <View style={styles.screen}>
       <View style={{ paddingHorizontal: space(6), paddingTop: insets.top + space(8) }}>
+        <Pressable onPress={() => go('splash')} hitSlop={10} style={styles.back}>
+          <Label tone="faint">← Back</Label>
+        </Pressable>
         <Label>Step 2 of 5</Label>
-        <Text style={styles.h1}>Before you make an account</Text>
+        <Text style={styles.h1}>Before you play.</Text>
+        <Body style={{ color: color.dim, marginTop: space(2) }}>
+          Four things worth actually knowing.
+        </Body>
       </View>
 
       {/* The fits-entirely case is handled inside useScrollGate, which has to
@@ -64,7 +71,9 @@ export function LegalGate() {
         {HIGHLIGHTS.map((h, i) => (
           <FadeIn key={h.title} index={i}>
             <View style={styles.item}>
-              <Text style={styles.itemNum}>{String(i + 1).padStart(2, '0')}</Text>
+              <Text style={[styles.itemNum, i === 0 && { color: color.warn }]}>
+                {String(i + 1).padStart(2, '0')}
+              </Text>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.itemTitle}>{h.title}</Text>
                 <Body style={{ color: color.dim, marginTop: space(1.5), fontSize: 14 }}>
@@ -84,17 +93,24 @@ export function LegalGate() {
           </Pressable>
         </View>
 
-        <Mono style={styles.draftNote}>
-          Draft documents. Not yet reviewed by a lawyer, and they will change before
-          public launch.
-        </Mono>
+        {TEST_MODE && (
+          <Mono style={styles.draftNote}>
+            Draft documents. Not yet reviewed by a lawyer, and they will change before
+            public launch.
+          </Mono>
+        )}
       </ScrollView>
 
       <View style={{ padding: space(6), paddingBottom: insets.bottom + space(5) }}>
+        {/* The button never changes its name. The instruction for unlocking it
+            lives above it instead, so the control reads as one thing. */}
+        {!reachedEnd && (
+          <Mono style={styles.scrollHint}>SCROLL TO THE END TO CONTINUE ↓</Mono>
+        )}
         <Btn
-          title={reachedEnd ? 'I agree' : 'Scroll to the end'}
+          title="I agree"
           disabled={!reachedEnd}
-          sub={reachedEnd ? 'to the Terms of Service and Privacy Policy' : undefined}
+          sub="TO THE TERMS OF SERVICE AND PRIVACY POLICY"
           onPress={() => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             go('auth');
@@ -145,6 +161,14 @@ export function DocViewer({ doc, onClose }: { doc: Doc | null; onClose: () => vo
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
+  back: { alignSelf: 'flex-start', marginBottom: space(4) },
+  scrollHint: {
+    fontSize: 11,
+    letterSpacing: 1.2,
+    color: color.dim,
+    textAlign: 'center',
+    marginBottom: space(3),
+  },
   h1: {
     fontFamily: font.display,
     fontSize: 30,

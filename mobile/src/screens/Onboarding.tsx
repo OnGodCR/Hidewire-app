@@ -3,6 +3,7 @@ import {
   Animated,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -32,20 +33,19 @@ export function Splash() {
   }, []);
   return (
     <View style={styles.screen}>
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space(7) }}>
         <Brackets size={18} thickness={2.5} inset={-18} tint={color.accent}>
           <Animated.Text style={[styles.wordmark, { opacity: blink }]}>HIDEWIRE</Animated.Text>
         </Brackets>
-        <Mono style={{ marginTop: space(8), color: color.dim, letterSpacing: 2, fontSize: 12 }}>
-          HIDING ISN'T ENOUGH.
-        </Mono>
-        <Mono style={{ marginTop: 4, color: color.text, letterSpacing: 2, fontSize: 12 }}>
-          PROVE IT.
-        </Mono>
+        {/* The splash used to teach nothing: two taglines and a legal footnote.
+            A first-time player deserves the premise before the funnel starts. */}
+        <Body style={styles.premiseLead}>Real hide and seek, on a real map.</Body>
+        <Body style={styles.premise}>
+          Prove where you hide with a photo. Miss a check-in and you are out.
+        </Body>
       </View>
       <View style={{ padding: space(6), paddingBottom: space(12) }}>
-        <Btn title="Enter" onPress={() => go('dob')} />
-        <Mono style={styles.footnote}>PRIVATE PARTIES ONLY · INVITE CODE REQUIRED</Mono>
+        <Btn title="Start" onPress={() => go('dob')} />
       </View>
     </View>
   );
@@ -91,6 +91,9 @@ export function DobGate() {
   const { go, setAgeBracket } = useGame();
   const insets = useSafeAreaInsets();
   const [age, setAge] = useState<number>(MIN_AGE);
+  // The continue button stays dead until the slider has actually been moved,
+  // so the opening value of 1 can never be submitted by reflex.
+  const [touched, setTouched] = useState(false);
   const [refused, setRefused] = useState(false);
   const [corrections, setCorrections] = useState(0);
   const [track, setTrack] = useState(0);
@@ -110,6 +113,7 @@ export function DobGate() {
     setCorrections((c) => c + 1);
     setRefused(false);
     setAge(MIN_AGE);
+    setTouched(false);
   };
 
   if (refused) {
@@ -121,9 +125,9 @@ export function DobGate() {
         <Body style={{ color: color.dim, marginTop: space(3) }}>
           {attemptsLeft > 0
             ? 'If you set that wrong, you can correct it.'
-            : 'You have used all your corrections on this device.'}
+            : 'You have used all your corrections on this device. If this was a mistake, reinstalling will not reset it, but you can come back when you turn 13.'}
         </Body>
-        {attemptsLeft > 0 && (
+        {attemptsLeft > 0 ? (
           <>
             <Btn
               title="Set my age again"
@@ -135,6 +139,15 @@ export function DobGate() {
               {attemptsLeft} {attemptsLeft === 1 ? 'CORRECTION' : 'CORRECTIONS'} LEFT
             </Mono>
           </>
+        ) : (
+          // An exit, not a retry. The refusal is permanent; the screen should
+          // still have a door out of it rather than being a dead end.
+          <Btn
+            title="Back to the start"
+            variant="outline"
+            style={{ marginTop: space(6) }}
+            onPress={() => go('splash')}
+          />
         )}
       </View>
     );
@@ -142,6 +155,7 @@ export function DobGate() {
 
   const setFromX = (x: number) => {
     if (track <= 0) return;
+    setTouched(true);
     const frac = Math.max(0, Math.min(1, x / track));
     setAge(Math.round(MIN_AGE + frac * (MAX_AGE - MIN_AGE)));
   };
@@ -165,6 +179,7 @@ export function DobGate() {
             set, and putting it there means the thumb never has to be lifted to
             read the answer. */}
         <View style={styles.sliderBlock}>
+          <Label style={{ marginBottom: space(2) }}>Your age</Label>
           <View style={styles.bubbleRow} pointerEvents="none">
             {track > 0 && (
               <View style={[styles.bubbleWrap, { left: bubbleLeft }]}>
@@ -198,18 +213,16 @@ export function DobGate() {
             </View>
           </View>
 
+          <Mono style={styles.sliderHint}>DRAG TO YOUR AGE, THEN CONTINUE</Mono>
+
           <View style={styles.scaleRow}>
             <Mono style={styles.scaleEnd}>{MIN_AGE}</Mono>
             <Mono style={styles.scaleEnd}>{MAX_AGE}+</Mono>
           </View>
         </View>
-
-        <Mono style={styles.sliderHint}>
-          DRAG THE SLIDER TO SET YOUR AGE
-        </Mono>
       </View>
       <View style={{ padding: space(6), paddingBottom: insets.bottom + space(6) }}>
-        <Btn title="Continue" onPress={submit} />
+        <Btn title="Continue" disabled={!touched} onPress={submit} />
       </View>
     </View>
   );
@@ -225,10 +238,15 @@ export function HandlePick() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={{ flex: 1, padding: space(6), paddingTop: insets.top + space(10) }}>
+        <Pressable onPress={() => go('auth')} hitSlop={10} style={styles.back}>
+          <Label tone="faint">← Back</Label>
+        </Pressable>
         <Label>Step 4 of 5</Label>
         <Text style={styles.h1}>Pick a handle</Text>
         <Body style={{ color: color.dim, marginTop: space(2) }}>
-          This is what your party sees on the map and in the feed.
+          Your party will see this as{' '}
+          <Text style={styles.handlePreview}>{v || 'HANDLE'}</Text> on the map and in
+          the feed.
         </Body>
         <TextInput
           value={v}
@@ -238,8 +256,18 @@ export function HandlePick() {
           autoFocus
           autoCapitalize="characters"
           autoCorrect={false}
-          style={[styles.dateCell, { flex: 0, marginTop: space(8), letterSpacing: 3 }]}
+          style={[styles.handleInput, { marginTop: space(8), letterSpacing: 3 }]}
         />
+        <View style={styles.handleMeta}>
+          <Mono style={styles.handleRule}>
+            {v.length > 0 && v.length < 3
+              ? 'AT LEAST 3 CHARACTERS'
+              : 'LETTERS, NUMBERS AND UNDERSCORE ONLY'}
+          </Mono>
+          <Mono style={[styles.handleCount, v.length >= 3 && { color: color.accent }]}>
+            {v.length}/12
+          </Mono>
+        </View>
       </View>
       <View style={{ padding: space(6), paddingBottom: insets.bottom + space(6) }}>
         <Btn
@@ -317,25 +345,34 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     color: color.text,
   },
-  footnote: {
-    fontSize: 9,
-    letterSpacing: 1.5,
-    color: color.faint,
+  premiseLead: {
+    marginTop: space(9),
+    color: color.text,
     textAlign: 'center',
-    marginTop: space(4),
+    fontSize: 16,
+    lineHeight: 23,
   },
+  premise: {
+    marginTop: space(3),
+    color: color.dim,
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  funnelNote: {
+    fontSize: 11,
+    letterSpacing: 1.4,
+    color: color.dim,
+    textAlign: 'center',
+    marginBottom: space(4),
+  },
+  back: { alignSelf: 'flex-start', marginBottom: space(4) },
   h1: {
     fontFamily: font.display,
     fontSize: 30,
     color: color.text,
     marginTop: space(2),
     letterSpacing: -0.5,
-  },
-  dobError: {
-    fontSize: 12,
-    color: color.warn,
-    marginTop: space(4),
-    letterSpacing: 0.5,
   },
   sliderBlock: { marginTop: space(12) },
   bubbleRow: { height: 54 },
@@ -395,15 +432,28 @@ const styles = StyleSheet.create({
   scaleRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space(2) },
   scaleEnd: { fontSize: 10, letterSpacing: 1, color: color.faint },
   sliderHint: {
-    fontSize: 10,
-    letterSpacing: 1.4,
-    color: color.faint,
+    fontSize: 12,
+    letterSpacing: 1.0,
+    color: color.dim,
     textAlign: 'center',
-    marginTop: space(5),
-    minHeight: 14,
+    marginTop: space(3),
   },
-  dateCell: {
-    flex: 1,
+  handlePreview: {
+    fontFamily: font.monoSemi,
+    fontSize: 14,
+    color: color.text,
+    letterSpacing: 1,
+  },
+  handleMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: space(2.5),
+    gap: space(3),
+  },
+  handleRule: { fontSize: 11, letterSpacing: 1, color: color.faint },
+  handleCount: { fontSize: 11, letterSpacing: 1, color: color.faint },
+  handleInput: {
     minWidth: 0,
     ...(Platform.OS === 'web' ? ({ outlineWidth: 0 } as object) : null),
     height: 62,

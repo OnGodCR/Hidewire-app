@@ -27,6 +27,7 @@ type Saved = Pick<
   | 'film'
   | 'seasonXp'
   | 'owned'
+  | 'items'
   | 'equipped'
   | 'paidPass'
 >;
@@ -49,6 +50,9 @@ export async function saveProfile(p: Profile) {
     film: p.film,
     seasonXp: p.seasonXp,
     owned: p.owned,
+    // A profile saved before items existed simply lacks the key; the loader
+    // merges over FRESH_PROFILE, so it hydrates back as an empty inventory.
+    items: p.items ?? {},
     equipped: p.equipped,
     paidPass: p.paidPass,
   };
@@ -152,6 +156,12 @@ export interface Seen {
    * dismissed is how people learn to tap past warnings.
    */
   adsNoticeHidden: boolean;
+  /**
+   * NEARBY visibility opt-in (18+ only). Off by default, and persisted so the
+   * switch does not silently reset between sessions: a player who chose to be
+   * visible stays visible until they say otherwise, and vice versa.
+   */
+  nearbyVisible: boolean;
 }
 
 export const FRESH_SEEN: Seen = {
@@ -160,6 +170,7 @@ export const FRESH_SEEN: Seen = {
   starterOffered: false,
   tutorialDone: false,
   adsNoticeHidden: false,
+  nearbyVisible: false,
 };
 
 export async function loadSeen(): Promise<Seen | null> {

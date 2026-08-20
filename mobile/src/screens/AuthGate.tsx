@@ -6,7 +6,7 @@ import * as Linking from 'expo-linking';
 import * as Haptics from 'expo-haptics';
 import Svg, { Path } from 'react-native-svg';
 import { color, font, radius, space } from '../theme';
-import { Body, Btn, Label, Mono } from '../components/ui';
+import { Body, Btn, Card, Label, Mono, Rule } from '../components/ui';
 import { FadeIn, PressScale } from '../components/motion';
 import { supabase, supabaseReady } from '../lib/supabase';
 import { TEST_MODE } from '../config';
@@ -94,16 +94,32 @@ export function AuthGate() {
     <View style={styles.screen}>
       <View style={{ flex: 1, padding: space(6), paddingTop: insets.top + space(8) }}>
         <FadeIn>
+          <Pressable onPress={() => go('legal')} hitSlop={10} style={styles.back}>
+            <Label tone="faint">← Back</Label>
+          </Pressable>
           <Label>Step 3 of 5</Label>
           <Text style={styles.h1}>Save your progress</Text>
-          <Body style={{ color: color.dim, marginTop: space(2) }}>
-            Linking an account keeps your level, cosmetics, and stats if you change phone.
-            You can skip this and decide later.
-          </Body>
         </FadeIn>
 
-        <View style={{ marginTop: space(8), gap: space(3) }}>
-          <FadeIn index={1}>
+        {/* The old paragraph made the case for an account and left the guest
+            path implied. The comparison is the actual decision, so show it as
+            one, side by side, with neither option talked down. */}
+        <FadeIn index={1}>
+          <Card style={{ marginTop: space(4) }}>
+            <Label tone="accent">With an account</Label>
+            <Body style={styles.compareBody}>
+              Your level, FILM and cosmetics move with you to a new phone.
+            </Body>
+            <Rule style={{ marginVertical: space(3) }} />
+            <Label tone="faint">As a guest</Label>
+            <Body style={styles.compareBody}>
+              Progress stays on this phone only. Link an account later any time.
+            </Body>
+          </Card>
+        </FadeIn>
+
+        <View style={{ marginTop: space(6), gap: space(3) }}>
+          <FadeIn index={2}>
             <ProviderButton
               provider="google"
               label="Continue with Google"
@@ -112,7 +128,7 @@ export function AuthGate() {
             />
           </FadeIn>
           {Platform.OS !== 'android' && (
-            <FadeIn index={2}>
+            <FadeIn index={3}>
               <ProviderButton
                 provider="apple"
                 label="Continue with Apple"
@@ -129,7 +145,7 @@ export function AuthGate() {
           </View>
         )}
 
-        {!supabaseReady && (
+        {TEST_MODE && !supabaseReady && (
           <View style={styles.errorBox}>
             <Mono style={{ fontSize: 11, color: color.faint, lineHeight: 17 }}>
               No Supabase project configured. Guest play works; sign-in needs the keys in
@@ -143,7 +159,8 @@ export function AuthGate() {
         <Btn
           title="Play as a guest"
           variant="outline"
-          sub="progress stays on this device only"
+          sub="PROGRESS STAYS ON THIS DEVICE"
+          disabled={busy !== null}
           onPress={() => {
             setAuth({ kind: 'guest', email: null });
             go(nextAfterAuth());
@@ -161,9 +178,6 @@ export function AuthGate() {
             }}
           />
         )}
-        <Mono style={styles.footnote}>
-          Guests get a device-local account. We collect no email address at all.
-        </Mono>
       </View>
     </View>
   );
@@ -228,6 +242,13 @@ function AppleMark() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
+  back: { alignSelf: 'flex-start', marginBottom: space(4) },
+  compareBody: {
+    color: color.dim,
+    marginTop: space(1.5),
+    fontSize: 14,
+    lineHeight: 20,
+  },
   h1: {
     fontFamily: font.display,
     fontSize: 30,

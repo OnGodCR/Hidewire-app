@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { color, font, radius, space } from '../theme';
-import { Body, Btn, Card, Label, Mono, Rule } from '../components/ui';
+import { Bar, Body, Btn, Card, Label, Mono, Rule, Toast } from '../components/ui';
 import { FadeIn } from '../components/motion';
 import { ZoneMap } from '../components/ZoneMap';
 import { useWorld } from '../engine/WorldContext';
@@ -22,19 +20,73 @@ import { PermissionNote } from './Onboarding';
 import { useScrollGate } from '../components/useScrollGate';
 import { TEST_MODE } from '../config';
 
+// ---------------------------------------------------------------------------
+// The lobby is one screen reached from two directions, and the difference
+// matters: the home path makes you the host, the join path does not. The route
+// table has no params, so the join screen leaves the code it validated in a
+// module flag and the lobby picks it up on mount. Null means hosting.
+// ---------------------------------------------------------------------------
+let joinedWithCode: string | null = null;
+
+/**
+ * A one-shot notice for the lobby to show on arrival, set by whichever screen
+ * sent the player here. Friends' HOST action uses it, so the confirmation can
+ * appear on the screen it talks about rather than on one that is unmounting.
+ */
+let lobbyNotice: string | null = null;
+export function setLobbyNotice(text: string) {
+  lobbyNotice = text;
+}
+
 // ---------- join ----------
+
+type JoinPhase = 'idle' | 'checking' | 'failed' | 'success';
 
 export function Join() {
   const { go } = useGame();
   const [code, setCode] = useState('');
+  const [phase, setPhase] = useState<JoinPhase>('idle');
   const inputRef = useRef<TextInput>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const insets = useSafeAreaInsets();
-  useEffect(() => {
-    if (code.length === 6) {
-      const t = setTimeout(() => go('lobby'), 350);
-      return () => clearTimeout(t);
-    }
-  }, [code]);
+
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  // There is no backend call yet, so the check is simulated rather than
+  // skipped: in test mode any well-formed code resolves, which is exactly the
+  // set the demo accepted before, and outside test mode every code fails
+  // honestly because there is no server holding a party to find.
+  const submit = () => {
+    if (code.length < 6 || phase === 'checking' || phase === 'success') return;
+    setPhase('checking');
+    timers.current.push(
+      setTimeout(() => {
+        if (TEST_MODE) {
+          setPhase('success');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          timers.current.push(
+            setTimeout(() => {
+              joinedWithCode = code;
+              go('lobby');
+            }, 250),
+          );
+        } else {
+          setPhase('failed');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+      }, 700),
+    );
+  };
+
+  const cellBorder =
+    phase === 'checking'
+      ? color.line
+      : phase === 'failed'
+        ? color.danger
+        : phase === 'success'
+          ? color.accent
+          : null;
+
   return (
     <View style={styles.screen}>
       <View style={{ flex: 1, padding: space(6), paddingTop: insets.top + space(10) }}>
@@ -42,9 +94,6 @@ export function Join() {
           <Label tone="faint">← Back</Label>
         </Pressable>
         <Text style={styles.h1}>Enter invite code</Text>
-        <Body style={{ color: color.dim, marginTop: space(2) }}>
-          Codes come from someone already in the party. There's no other way in.
-        </Body>
         <Pressable
           style={styles.codeRow}
           onPress={() => inputRef.current?.focus()}
@@ -52,7 +101,11 @@ export function Join() {
           {Array.from({ length: 6 }).map((_, i) => (
             <View
               key={i}
-              style={[styles.codeCell, i === code.length && styles.codeCellActive]}
+              style={[
+                styles.codeCell,
+                i === code.length && phase === 'idle' && styles.codeCellActive,
+                cellBorder != null && { borderColor: cellBorder },
+              ]}
             >
               <Text style={styles.codeChar}>{code[i] ?? ''}</Text>
             </View>
@@ -61,17 +114,39 @@ export function Join() {
         <TextInput
           ref={inputRef}
           value={code}
-          onChangeText={(v) =>
-            setCode(v.replace(/[^a-hj-km-np-zA-HJ-KM-NP-Z2-9]/g, '').toUpperCase().slice(0, 6))
-          }
+          editable={phase !== 'checking' && phase !== 'success'}
+          onChangeText={(v) => {
+            setCode(v.replace(/[^a-hj-km-np-zA-HJ-KM-NP-Z2-9]/g, '').toUpperCase().slice(0, 6));
+            if (phase === 'failed') setPhase('idle');
+          }}
           autoFocus
           autoCapitalize="characters"
           autoCorrect={false}
           style={{ position: 'absolute', opacity: 0, height: 1 }}
         />
-        <Mono style={{ fontSize: 10, color: color.faint, marginTop: space(3) }}>
-          NO 0/O · NO 1/I/L · CODES SKIP AMBIGUOUS CHARACTERS
-        </Mono>
+        {/* Fixed height, so the three states swap without the layout jumping. */}
+        <View style={styles.codeStatus}>
+          {phase === 'failed' ? (
+            <Body style={{ color: color.danger, fontSize: 13, lineHeight: 18 }}>
+              No party with that code. Check it with whoever sent it.
+            </Body>
+          ) : phase === 'checking' || phase === 'success' ? (
+            <Mono style={{ fontSize: 10, color: color.dim, letterSpacing: 1.2 }}>
+              CHECKING CODE...
+            </Mono>
+          ) : (
+            <Mono style={{ fontSize: 10, color: color.faint }}>
+              NO 0/O · NO 1/I/L · CODES SKIP AMBIGUOUS CHARACTERS
+            </Mono>
+          )}
+        </View>
+      </View>
+      <View style={{ padding: space(6), paddingBottom: insets.bottom + space(5) }}>
+        <Btn
+          title="Join party"
+          disabled={code.length < 6 || phase === 'checking' || phase === 'success'}
+          onPress={submit}
+        />
       </View>
     </View>
   );
@@ -221,6 +296,9 @@ function activePreset(s: Record<string, number>): string | null {
 
 const HOST_LEVEL_GATE = 20;
 
+/** Invite codes live for four hours; the demo opens partway through. */
+const CODE_TTL_S = 4 * 3600 - 140;
+
 export function Lobby() {
   const { go, profile, partyCode, startRound, spendFilm } = useGame();
   const { world, status, request } = useWorld();
@@ -228,6 +306,17 @@ export function Lobby() {
   const { width } = useWindowDimensions();
   const [elapsed, setElapsed] = useState(0);
   const [settings, setSettings] = useState<Record<string, number>>(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Captured once on mount. The home path leaves the flag null, so hosting is
+  // the default; the join path filled it with the code that was validated.
+  const [joinedCode] = useState<string | null>(joinedWithCode);
+  const [notice, setNotice] = useState<string | null>(lobbyNotice);
+  const isHost = joinedCode == null;
+  useEffect(() => {
+    joinedWithCode = null;
+    lobbyNotice = null;
+  }, []);
 
   // The zone centres on the host's position (PRD 4.2), so this is the moment
   // location is genuinely needed and therefore the right moment to ask.
@@ -238,12 +327,23 @@ export function Lobby() {
   const cycle = (def: SettingDef) => {
     Haptics.selectionAsync();
     setSettings((s) => {
-      const next = ((s[def.key] ?? 0) + 1) % def.options.length;
+      const gated = def.lockedAbove !== undefined && profile.level < HOST_LEVEL_GATE;
+      let next = ((s[def.key] ?? 0) + 1) % def.options.length;
+      if (gated) {
+        // Skip locked options instead of stepping into them and warning after.
+        let guard = 0;
+        while (next >= def.lockedAbove! && guard++ < def.options.length) {
+          next = (next + 1) % def.options.length;
+        }
+      }
       return { ...s, [def.key]: next };
     });
   };
 
+  // A preset can still land on a locked value (RURAL, below level 20), which
+  // is the one path left into this notice now that cycling skips locks.
   const gatedNotice =
+    isHost &&
     profile.level < HOST_LEVEL_GATE &&
     SETTING_DEFS.some(
       (d) => d.lockedAbove !== undefined && (settings[d.key] ?? 0) >= d.lockedAbove,
@@ -263,7 +363,7 @@ export function Lobby() {
   const simElapsed = simFrom == null ? -1 : elapsed - simFrom;
 
   const roster: RosterRow[] = [
-    { name: profile.handle || 'YOU', ready: acked, you: true, host: true },
+    { name: profile.handle || 'YOU', ready: acked, you: true, host: isHost },
     ...(simFrom == null
       ? []
       : SIM_SCHEDULE.filter((j) => simElapsed >= j.t).map((j) => ({
@@ -274,18 +374,33 @@ export function Lobby() {
   ];
 
   const allIn = roster.length >= MIN_PARTY && roster.every((r) => r.ready);
-  const canStart = acked && allIn;
   const preset = activePreset(settings);
+  const presetDetail = preset ? PRESETS.find((p) => p.key === preset)!.detail : null;
+
+  const expiresIn = Math.max(0, CODE_TTL_S - elapsed);
+  const expired = expiresIn === 0;
 
   // Seeker bidding. Highest bid takes the role rather than the server rolling
-  // for it. Bids are in FILM, which is earned only, never sold: see the note on
-  // Profile.film. The winner PAYS, so this is a sink, not a reward, and wanting
-  // to seek is a preference rather than an advantage.
+  // for it. The winner PAYS, so this is a sink, not a reward. FILM is sold now
+  // (see CLAUDE.md 6), which makes this winnable with money; that tension is
+  // recorded there rather than resolved here.
   const [bid, setBid] = useState(0);
   // Nobody to outbid until there is somebody in the lobby to outbid.
   const topRivalBid = roster.some((r) => r.sim) ? RIVAL_BID : 0;
   const winningBid = bid > topRivalBid;
   const canBid = bid + BID_STEP <= profile.film;
+  const maxBid = Math.floor(profile.film / BID_STEP) * BID_STEP;
+
+  const blocker = expired
+    ? 'THIS INVITE CODE HAS EXPIRED'
+    : roster.length < MIN_PARTY
+      ? `NEEDS ${MIN_PARTY} PLAYERS · YOU HAVE ${roster.length}`
+      : !acked
+        ? 'READ THE SAFETY CARD FIRST'
+        : !allIn
+          ? 'WAITING FOR EVERYONE TO BE READY'
+          : null;
+  const canStart = blocker == null;
 
   return (
     <View style={styles.screen}>
@@ -303,21 +418,26 @@ export function Lobby() {
         <FadeIn style={styles.codeHeader}>
           <View>
             <Label tone="faint">Invite code</Label>
-            <Text style={styles.bigCode}>{partyCode}</Text>
+            <Text style={styles.bigCode}>{joinedCode ?? partyCode}</Text>
           </View>
           <View style={styles.expiry}>
             <Label tone="faint" style={{ fontSize: 8 }}>
               EXPIRES
             </Label>
-            <Mono style={{ fontSize: 12, color: color.dim }}>
-              {(() => {
-                const s = 4 * 3600 - 140 - elapsed;
-                const h = Math.floor(s / 3600);
-                const m = Math.floor((s % 3600) / 60);
-                const ss = s % 60;
-                return `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-              })()}
-            </Mono>
+            {expired ? (
+              <Mono style={{ fontSize: 12, color: color.warn, letterSpacing: 1 }}>
+                CODE EXPIRED
+              </Mono>
+            ) : (
+              <Mono style={{ fontSize: 12, color: color.dim }}>
+                {(() => {
+                  const h = Math.floor(expiresIn / 3600);
+                  const m = Math.floor((expiresIn % 3600) / 60);
+                  const ss = expiresIn % 60;
+                  return `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+                })()}
+              </Mono>
+            )}
           </View>
         </FadeIn>
 
@@ -363,8 +483,17 @@ export function Lobby() {
                 {r.host && <Text style={styles.hostTag}>HOST</Text>}
                 {/* Never let a simulated name pass for a person. */}
                 {r.sim && <Text style={styles.simTag}>TEST</Text>}
-                <Mono style={{ fontSize: 10, color: r.ready ? color.accent : color.faint }}>
-                  {r.ready ? 'READY' : 'JOINED'}
+                <Mono
+                  style={{
+                    fontSize: r.you && !r.ready ? 8 : 10,
+                    color: r.ready ? color.accent : color.faint,
+                  }}
+                >
+                  {r.ready
+                    ? 'READY'
+                    : r.you
+                      ? 'READ THE SAFETY CARD TO GO READY'
+                      : 'JOINED'}
                 </Mono>
               </View>
             </FadeIn>
@@ -373,12 +502,12 @@ export function Lobby() {
           {/* Empty state. The invite code is the only way anyone joins. */}
           {roster.length < MIN_PARTY && (
             <View style={styles.waitingRow}>
-              <Mono style={{ fontSize: 11, color: color.dim, lineHeight: 17 }}>
+              <Body style={{ fontSize: 13, color: color.dim, lineHeight: 19 }}>
                 Waiting for {MIN_PARTY - roster.length} more.{' '}
                 {simFrom == null
                   ? 'Send them the invite code above.'
                   : 'Test players are arriving.'}
-              </Mono>
+              </Body>
               <Mono style={{ fontSize: 9, color: color.faint, letterSpacing: 1, marginTop: 4 }}>
                 NOBODY CAN JOIN WITHOUT THE CODE. HIDEWIRE NEVER MATCHES YOU WITH STRANGERS.
               </Mono>
@@ -391,98 +520,186 @@ export function Lobby() {
                   style={({ pressed }) => [styles.simBtn, pressed && { opacity: 0.7 }]}
                 >
                   <Mono style={styles.simBtnText}>ADD TEST PLAYERS</Mono>
-                  <Mono style={{ fontSize: 9, color: color.faint, marginTop: 2 }}>
-                    simulated, for trying the round out alone
-                  </Mono>
+                  <Body style={{ fontSize: 11, color: color.faint, marginTop: 2 }}>
+                    Simulated, for trying the round out alone.
+                  </Body>
                 </Pressable>
               )}
             </View>
           )}
         </Card>
 
-        {/* presets, before the ten individual dials */}
-        <Card style={{ marginTop: space(4), padding: 0 }}>
-          <View style={styles.cardHeader}>
-            <Label tone="text">Preset</Label>
-            <Mono style={{ fontSize: 10, color: color.faint }}>
-              {preset ? 'MATCHED' : 'CUSTOM'}
-            </Mono>
+        {/* safety gate, directly under the roster: it is the one thing every
+            player must act on, so it comes before any of the host's dials */}
+        <Card
+          style={{
+            marginTop: space(4),
+            borderColor: acked ? color.line : color.warn,
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Label tone={acked ? 'accent' : 'text'}>
+              {acked ? 'Safety card: acknowledged' : 'Safety card'}
+            </Label>
+            {!acked && <Label tone="faint">REQUIRED</Label>}
           </View>
-          <View style={{ paddingHorizontal: space(4), paddingBottom: space(4), gap: space(2) }}>
-            {PRESETS.map((p) => {
-              const on = preset === p.key;
-              return (
-                <Pressable
-                  key={p.key}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    setSettings({ ...p.settings });
-                  }}
-                  style={({ pressed }) => [
-                    styles.presetCard,
-                    on && { borderColor: color.accent, backgroundColor: color.surface2 },
-                    pressed && { opacity: 0.75 },
-                  ]}
-                >
-                  <View style={styles.presetTop}>
-                    <Mono style={[styles.presetName, on && { color: color.accent }]}>
-                      {p.name}
-                    </Mono>
-                    {on && (
-                      <Mono style={{ fontSize: 9, letterSpacing: 1.2, color: color.accent }}>
-                        ACTIVE
-                      </Mono>
-                    )}
-                  </View>
-                  <Mono style={styles.presetBlurb}>{p.blurb}</Mono>
-                  <Mono style={styles.presetDetail}>{p.detail}</Mono>
-                </Pressable>
-              );
-            })}
-            <Mono style={{ fontSize: 9, color: color.faint, lineHeight: 14 }}>
-              Pick one, then change anything below. Editing a dial makes it CUSTOM.
-            </Mono>
-          </View>
+          <Body style={{ fontSize: 13, marginTop: space(2), lineHeight: 19, color: color.dim }}>
+            Every player reads and acknowledges the safety card before the host can
+            start. Logged per player, per round.
+          </Body>
+          {!acked && (
+            <Btn
+              title="Read safety card"
+              variant="ghost"
+              style={{ marginTop: space(3) }}
+              onPress={() => setSafetyOpen(true)}
+            />
+          )}
         </Card>
 
-        {/* settings */}
+        {/* presets, host only: a joiner has nothing to apply them to */}
+        {isHost && (
+          <Card style={{ marginTop: space(4), padding: 0 }}>
+            <View style={styles.cardHeader}>
+              <Label tone="text">Preset</Label>
+              <Mono style={{ fontSize: 10, color: color.faint }}>
+                {preset ? 'MATCHED' : 'CUSTOM'}
+              </Mono>
+            </View>
+            <View style={{ paddingHorizontal: space(4), paddingBottom: space(4), gap: space(2) }}>
+              {PRESETS.map((p) => {
+                const on = preset === p.key;
+                return (
+                  <Pressable
+                    key={p.key}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      setSettings({ ...p.settings });
+                    }}
+                    style={({ pressed }) => [
+                      styles.presetCard,
+                      on && { borderColor: color.accent, backgroundColor: color.surface2 },
+                      pressed && { opacity: 0.75 },
+                    ]}
+                  >
+                    <View style={styles.presetTop}>
+                      <Mono style={[styles.presetName, on && { color: color.accent }]}>
+                        {p.name}
+                      </Mono>
+                      {on && (
+                        <Mono style={{ fontSize: 9, letterSpacing: 1.2, color: color.accent }}>
+                          ACTIVE
+                        </Mono>
+                      )}
+                    </View>
+                    <Body style={styles.presetBlurb}>{p.blurb}</Body>
+                    <Mono style={styles.presetDetail}>{p.detail}</Mono>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Card>
+        )}
+
+        {/* settings: collapsed for the host until asked for, read-only for a
+            joiner. Ten dials before the first meaningful decision was the
+            whole problem, so the preset row above carries the default. */}
         <Card style={{ marginTop: space(4), padding: 0 }}>
           <View style={styles.cardHeader}>
             <Label tone="text">Round settings</Label>
-            <Mono style={{ fontSize: 10, color: color.faint }}>HOST ONLY</Mono>
+            <Mono style={{ fontSize: 10, color: color.faint }}>
+              {isHost ? (presetDetail ?? 'CUSTOM') : 'SET BY THE HOST'}
+            </Mono>
           </View>
-          {SETTING_DEFS.map((def) => {
-            const idx = settings[def.key] ?? 0;
-            const locked =
-              def.lockedAbove !== undefined &&
-              profile.level < HOST_LEVEL_GATE &&
-              idx >= def.lockedAbove;
-            return (
-              <Pressable
-                key={def.key}
-                onPress={() => cycle(def)}
-                style={({ pressed }) => [
-                  styles.settingRow,
-                  pressed && { backgroundColor: color.surface2 },
-                ]}
-              >
-                <Label tone="faint">{def.label}</Label>
-                <View style={styles.settingValue}>
-                  <Mono style={{ fontSize: 11, color: locked ? color.warn : color.text }}>
-                    {def.options[idx]}
-                  </Mono>
-                  <Mono style={styles.settingChevron}>›</Mono>
-                </View>
-              </Pressable>
-            );
-          })}
-          {gatedNotice && (
-            <View style={styles.gateNotice}>
-              <Mono style={{ fontSize: 10, color: color.warn, lineHeight: 15 }}>
-                Zones above 2 km and rounds over 60 minutes unlock at level{' '}
-                {HOST_LEVEL_GATE}. Keeps a first game from becoming unmanageable.
+          {isHost && !settingsOpen ? (
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setSettingsOpen(true);
+              }}
+              style={({ pressed }) => [
+                styles.expandRow,
+                pressed && { backgroundColor: color.surface2 },
+              ]}
+            >
+              <Mono style={{ fontSize: 11, letterSpacing: 1.4, color: color.accent }}>
+                CHANGE {SETTING_DEFS.length} SETTINGS ›
               </Mono>
-            </View>
+            </Pressable>
+          ) : (
+            <>
+              {isHost && (
+                <Body style={styles.settingsHint}>
+                  Tap a row to step through the options.
+                </Body>
+              )}
+              {SETTING_DEFS.map((def) => {
+                const idx = settings[def.key] ?? 0;
+                const gated =
+                  def.lockedAbove !== undefined && profile.level < HOST_LEVEL_GATE;
+                const lockedNow = gated && idx >= def.lockedAbove!;
+                return (
+                  <Pressable
+                    key={def.key}
+                    disabled={!isHost}
+                    onPress={() => cycle(def)}
+                    style={({ pressed }) => [
+                      styles.settingRow,
+                      pressed && isHost && { backgroundColor: color.surface2 },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Label tone="faint">{def.label}</Label>
+                      {gated && (
+                        <Mono
+                          style={{
+                            fontSize: 8,
+                            letterSpacing: 1,
+                            marginTop: 2,
+                            color: lockedNow ? color.warn : color.faint,
+                          }}
+                        >
+                          · LOCKED ABOVE {def.options[def.lockedAbove! - 1]}
+                        </Mono>
+                      )}
+                    </View>
+                    <View style={styles.settingValue}>
+                      <Mono
+                        style={{
+                          fontSize: 11,
+                          color: lockedNow ? color.warn : isHost ? color.text : color.dim,
+                        }}
+                      >
+                        {def.options[idx]}
+                      </Mono>
+                      {isHost && (
+                        <View style={styles.settingPos}>
+                          <Mono style={{ fontSize: 9, color: color.faint }}>
+                            {idx + 1}/{def.options.length}
+                          </Mono>
+                          <View style={{ alignSelf: 'stretch', marginTop: 3 }}>
+                            <Bar
+                              value={(idx + 1) / def.options.length}
+                              height={3}
+                              fg={color.dim}
+                              bg={color.line}
+                            />
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+              {gatedNotice && (
+                <View style={styles.gateNotice}>
+                  <Body style={{ fontSize: 12, color: color.warn, lineHeight: 17 }}>
+                    Zones above 2 km and rounds over 60 minutes unlock at level{' '}
+                    {HOST_LEVEL_GATE}. Keeps a first game from becoming unmanageable.
+                  </Body>
+                </View>
+              )}
+            </>
           )}
         </Card>
 
@@ -493,10 +710,9 @@ export function Lobby() {
             <Mono style={{ fontSize: 10, color: color.faint }}>OPTIONAL</Mono>
           </View>
           <View style={{ paddingHorizontal: space(4), paddingBottom: space(4) }}>
-            <Mono style={{ fontSize: 11, color: color.dim, lineHeight: 17 }}>
-              Nobody has to seek. If more than one of you wants it, the highest bid
-              takes the role and pays. Otherwise it is assigned at random.
-            </Mono>
+            <Body style={{ fontSize: 13, color: color.dim, lineHeight: 19 }}>
+              Highest bid seeks. No bids, random pick.
+            </Body>
 
             <View style={styles.bidRow}>
               <View>
@@ -509,7 +725,7 @@ export function Lobby() {
                 <Label tone="faint">TOP BID</Label>
                 <Text style={styles.bidRival}>
                   {Math.max(topRivalBid, bid)}
-                  {winningBid ? ' · YOU' : topRivalBid > 0 ? ' · KAI' : ''}
+                  {winningBid ? ' · YOU' : topRivalBid > 0 ? ` · ${SEEKER_BOT.name}` : ''}
                 </Text>
               </View>
             </View>
@@ -543,48 +759,19 @@ export function Lobby() {
               >
                 <Mono style={styles.bidBtnText}>+{BID_STEP}</Mono>
               </Pressable>
+              <Mono style={{ fontSize: 9, color: color.faint }}>MAX {maxBid}</Mono>
               <View style={{ flex: 1 }} />
               <Mono style={{ fontSize: 10, color: color.faint }}>
                 {profile.film - bid} FILM LEFT
               </Mono>
             </View>
 
-            {!canBid && bid < profile.film + BID_STEP && (
-              <Mono style={{ fontSize: 10, color: color.warn, marginTop: space(2) }}>
-                Not enough FILM. Earn it from daily assignments and rounds.
-              </Mono>
+            {!canBid && (
+              <Body style={{ fontSize: 12, color: color.warn, marginTop: space(2) }}>
+                Not enough FILM.
+              </Body>
             )}
-            <Mono style={{ fontSize: 9, color: color.faint, marginTop: space(2), lineHeight: 14 }}>
-
-            </Mono>
           </View>
-        </Card>
-
-        {/* safety gate */}
-        <Card
-          style={{
-            marginTop: space(4),
-            borderColor: acked ? color.line : color.warn,
-          }}
-        >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Label tone={acked ? 'accent' : 'text'}>
-              {acked ? 'Safety card: acknowledged' : 'Safety card'}
-            </Label>
-            {!acked && <Label tone="faint">REQUIRED</Label>}
-          </View>
-          <Mono style={{ fontSize: 12, marginTop: space(2), lineHeight: 18 }}>
-            Every player reads and acknowledges the safety card before the host can
-            start. Logged per player, per round.
-          </Mono>
-          {!acked && (
-            <Btn
-              title="Read safety card"
-              variant="ghost"
-              style={{ marginTop: space(3) }}
-              onPress={() => setSafetyOpen(true)}
-            />
-          )}
         </Card>
       </ScrollView>
 
@@ -600,20 +787,30 @@ export function Lobby() {
             the explanation belongs here rather than four screens back in a
             list the player skimmed before any of it meant anything. */}
         {canStart && <PermissionNote perm="notifications" />}
+        {/* The blocker gets its own strip rather than living in the button's
+            sub line: a disabled button that mumbles its reason underneath it
+            reads as broken, not blocked. */}
+        <View
+          style={[
+            styles.startStrip,
+            { borderColor: blocker ? color.warn : color.accentDim },
+          ]}
+        >
+          <Mono
+            style={{
+              fontSize: 11,
+              letterSpacing: 1.2,
+              textAlign: 'center',
+              color: blocker ? color.warn : color.accent,
+            }}
+          >
+            {blocker ??
+              (winningBid ? `YOU SEEK · ${bid} FILM` : 'SEEKER PICKED AT RANDOM')}
+          </Mono>
+        </View>
         <Btn
           title="Start round"
           disabled={!canStart}
-          sub={
-            canStart
-              ? winningBid
-                ? `you win the bid at ${bid} FILM · you seek`
-                : 'seeker assigned at random, server-side'
-              : roster.length < MIN_PARTY
-                ? `needs ${MIN_PARTY} players, you have ${roster.length}`
-                : !acked
-                  ? 'acknowledge the safety card first'
-                  : 'waiting for everyone to be ready…'
-          }
           onPress={() => {
             // Winning the bid buys the role and the FILM is spent either way.
             if (winningBid) spendFilm(bid);
@@ -631,6 +828,8 @@ export function Lobby() {
           onClose={() => setSafetyOpen(false)}
         />
       )}
+
+      <Toast text={notice} onDone={() => setNotice(null)} bottom={140} />
     </View>
   );
 }
@@ -667,10 +866,10 @@ function SafetyOverlay({ onAck, onClose }: { onAck: () => void; onClose: () => v
           </View>
         ))}
         <Rule style={{ marginVertical: space(4) }} />
-        <Mono style={{ fontSize: 11, lineHeight: 17, color: color.faint }}>
+        <Body style={{ fontSize: 13, lineHeight: 19, color: color.faint }}>
           Your acknowledgment is logged for this round. This is a real place with real
           people in it. You are responsible for where you put yourself.
-        </Mono>
+        </Body>
       </ScrollView>
       <View style={{ padding: space(6), paddingBottom: insets.bottom + space(5) }}>
         <Btn
@@ -714,6 +913,11 @@ const styles = StyleSheet.create({
     fontFamily: font.monoSemi,
     fontSize: 24,
     color: color.text,
+  },
+  codeStatus: {
+    height: 48,
+    marginTop: space(3),
+    justifyContent: 'flex-start',
   },
   codeHeader: {
     flexDirection: 'row',
@@ -788,8 +992,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: color.line,
   },
-  settingValue: { flexDirection: 'row', alignItems: 'center', gap: space(2) },
-  settingChevron: { fontSize: 14, color: color.faint, marginTop: -2 },
+  settingValue: { flexDirection: 'row', alignItems: 'center', gap: space(3) },
+  settingPos: { alignItems: 'flex-end', width: 40 },
+  settingsHint: {
+    fontSize: 12,
+    color: color.faint,
+    lineHeight: 17,
+    paddingHorizontal: space(4),
+    paddingBottom: space(2),
+  },
+  expandRow: {
+    borderTopWidth: 1,
+    borderTopColor: color.line,
+    alignItems: 'center',
+    paddingVertical: space(3.5),
+  },
   simTag: {
     fontFamily: font.monoSemi,
     fontSize: 8,
@@ -861,22 +1078,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   presetName: { fontSize: 13, letterSpacing: 2, color: color.text },
-  presetBlurb: { fontSize: 11, color: color.dim, marginTop: 3, lineHeight: 16 },
+  presetBlurb: { fontSize: 12, color: color.dim, marginTop: 3, lineHeight: 17 },
   presetDetail: { fontSize: 9, letterSpacing: 1.2, color: color.faint, marginTop: 4 },
-  presetRow: {
-    paddingHorizontal: space(4),
-    paddingVertical: space(3),
-    borderTopWidth: 1,
-    borderTopColor: color.line,
-    alignItems: 'center',
-    gap: 3,
-  },
-  presetText: { fontSize: 10, letterSpacing: 1.4, color: color.accent },
   gateNotice: {
     paddingHorizontal: space(4),
     paddingVertical: space(3),
     borderTopWidth: 1,
     borderTopColor: color.line,
+  },
+  startStrip: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingVertical: space(2.5),
+    paddingHorizontal: space(3),
+    marginBottom: space(2.5),
   },
   ruleRow: {
     flexDirection: 'row',

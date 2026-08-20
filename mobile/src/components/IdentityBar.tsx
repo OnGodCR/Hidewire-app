@@ -15,8 +15,10 @@ import { byId } from '../data/catalog';
 // and currency pinned for the same reason: they are reference, not content, and
 // a player should never have to go looking for their own balance.
 //
-// FILM is hidden for guests rather than shown as zero. A guest has no FILM at
-// all, and showing an empty wallet implies one they could fill.
+// The FILM chip shows whenever there is FILM to show. Guests can hold FILM,
+// because the tutorial grant is not gated on an account, so hiding the chip
+// behind hasAccount would hide a real balance. A zero balance stays hidden:
+// showing an empty wallet implies one the player is expected to fill.
 // ---------------------------------------------------------------------------
 
 export function IdentityBar({ compact = false }: { compact?: boolean }) {
@@ -42,7 +44,7 @@ export function IdentityBar({ compact = false }: { compact?: boolean }) {
           )}
         </View>
 
-        {hasAccount && (
+        {(hasAccount || profile.film > 0) && (
           <View style={styles.filmChip}>
             <CosmeticPreview kind="film" size={16} />
             <CountUp value={profile.film} style={styles.filmText} />

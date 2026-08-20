@@ -38,7 +38,7 @@ export function Home() {
 
   return (
     <View style={styles.screen}>
-      <IdentityBar compact={tab !== 'game'} />
+      <IdentityBar compact={tab === 'location' || tab === 'social'} />
 
       <View style={styles.body}>
         {tab === 'game' && <GameTab onTab={setTab} />}

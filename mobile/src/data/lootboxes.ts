@@ -34,6 +34,20 @@ export const RARITY_LABEL: Record<Rarity, string> = {
   elite: 'ELITE',
 };
 
+/**
+ * One colour per tier, used everywhere a rarity appears: odds strips, item
+ * rows, inventory. The store was previously communicating rarity in prose
+ * ("a one in four chance it is elite"), which cannot be compared at a glance.
+ * A fixed colour scale can. Elite is deliberately the app's accent: the
+ * rarest thing in a box and the brand share one colour.
+ */
+export const RARITY_COLOR: Record<Rarity, string> = {
+  common: '#8A8A94',
+  uncommon: '#4EC97B',
+  rare: '#4EA8FF',
+  elite: '#C8FF2E',
+};
+
 // ---------------------------------------------------------------------------
 // Utility items: the things that are not cosmetics
 // ---------------------------------------------------------------------------

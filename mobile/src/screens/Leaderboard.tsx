@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, font, radius, space } from '../theme';
-import { Body, Card, Label, Mono } from '../components/ui';
+import { Body, Brackets, Card, EmptyState, Label, Mono } from '../components/ui';
 import { FadeIn, PressScale } from '../components/motion';
 import { useGame } from '../engine/GameContext';
 import { buildBoard, poolSize, type Scope } from '../data/leaderboard';
@@ -18,11 +18,14 @@ import { buildBoard, poolSize, type Scope } from '../data/leaderboard';
 // ---------------------------------------------------------------------------
 
 const SCOPES: { key: Scope; label: string }[] = [
-  { key: 'global', label: 'GLOBAL' },
-  { key: 'friends', label: 'FRIENDS' },
+  { key: 'global', label: 'EVERYONE' },
+  { key: 'friends', label: 'MY FRIENDS' },
 ];
 
-export function Leaderboard({ embedded = false }: { embedded?: boolean } = {}) {
+export function Leaderboard({
+  embedded = false,
+  onGoFriends,
+}: { embedded?: boolean; onGoFriends?: () => void } = {}) {
   const { go, profile, friends } = useGame();
   const insets = useSafeAreaInsets();
   const [scope, setScope] = useState<Scope>('global');
@@ -39,6 +42,14 @@ export function Leaderboard({ embedded = false }: { embedded?: boolean } = {}) {
 
   const total = poolSize(scope, friends.friends.filter((f) => !f.blocked).length);
 
+  // The standalone screen can route to Friends itself; embedded, the parent
+  // tab owns the segment and passes a flip. No handler means no button.
+  const goFriends = onGoFriends ?? (embedded ? undefined : () => go('friends'));
+
+  // Only the player on the board. Their row still renders; the empty state
+  // sits under it and says what would fill the space.
+  const onlyMe = rows.length <= 1;
+
   return (
     <View style={styles.screen}>
       <View style={[styles.header, { paddingTop: embedded ? space(3) : insets.top + space(4) }]}>
@@ -48,9 +59,8 @@ export function Leaderboard({ embedded = false }: { embedded?: boolean } = {}) {
           </PressScale>
         )}
         {!embedded && <Text style={styles.h1}>Leaderboard</Text>}
-        <Body style={{ color: color.dim, marginTop: space(1) }}>Ranked on XP.</Body>
 
-        <View style={[styles.tabs, embedded && { marginTop: space(2) }]}>
+        <View style={[styles.tabs, embedded && { marginTop: space(1) }]}>
           {SCOPES.map((s) => {
             const on = scope === s.key;
             return (
@@ -69,32 +79,42 @@ export function Leaderboard({ embedded = false }: { embedded?: boolean } = {}) {
           })}
         </View>
 
-        <View style={styles.rankBanner}>
-          <Mono style={{ fontSize: 10, color: color.dim, letterSpacing: 1 }}>YOUR RANK</Mono>
-          <Mono style={{ fontSize: 12, color: color.accent, letterSpacing: 1 }}>
-            {myRank} OF {total}
-          </Mono>
-        </View>
+        <Brackets size={12} thickness={2} inset={-1} tint={color.accent} style={{ marginTop: space(3) }}>
+          <Card style={styles.rankCard}>
+            <Label tone="faint">Your rank</Label>
+            <View style={styles.rankRow}>
+              <Text style={styles.rankBig}>{myRank}</Text>
+              <Mono style={styles.rankOf}>OF {total}</Mono>
+            </View>
+            <Mono style={styles.rankXp}>
+              {profile.seasonXp.toLocaleString()} XP THIS SEASON
+            </Mono>
+            <Body style={styles.rankExplainer}>
+              XP comes from rounds you finish and daily assignments. The board resets
+              each season.
+            </Body>
+          </Card>
+        </Brackets>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: space(5), paddingBottom: space(8) }}>
-        {rows.length <= 1 && scope === 'friends' ? (
-          <Card style={{ padding: space(4) }}>
-            <Mono style={{ fontSize: 11, color: color.dim, lineHeight: 17 }}>
-              No friends yet, so this board is just you. Add someone by code in the
-              friends tab.
-            </Mono>
-          </Card>
-        ) : (
-          rows.map((r, i) => (
+        {rows.map((r, i) => {
+          const top3 = i < 3;
+          return (
             <FadeIn key={r.id} index={Math.min(i, 8)} delay={80}>
               <View style={[styles.row, r.you && styles.rowYou]}>
-                <Text style={[styles.rank, r.you && { color: color.accent }]}>
+                <Text
+                  style={[styles.rank, (top3 || r.you) && { color: color.accent }]}
+                >
                   {String(i + 1).padStart(2, '0')}
                 </Text>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text
-                    style={[styles.name, r.you && { color: color.accent }]}
+                    style={[
+                      styles.name,
+                      top3 && { fontSize: 17 },
+                      r.you && { color: color.accent },
+                    ]}
                     numberOfLines={1}
                   >
                     {r.handle}
@@ -109,8 +129,24 @@ export function Leaderboard({ embedded = false }: { embedded?: boolean } = {}) {
                 </Text>
               </View>
             </FadeIn>
-          ))
-        )}
+          );
+        })}
+
+        {onlyMe &&
+          (scope === 'friends' ? (
+            <EmptyState
+              title="No friends on the board yet"
+              body="Add friends by code and their season XP lines up next to yours."
+              action={goFriends ? { title: 'Go to friends', onPress: goFriends } : undefined}
+              style={{ marginTop: space(4) }}
+            />
+          ) : (
+            <EmptyState
+              title="The season board is still filling up"
+              body="Play a round to put yourself on it."
+              style={{ marginTop: space(4) }}
+            />
+          ))}
 
         <Mono style={styles.footnote}>
           HANDLES AND SCORES ONLY · NO LOCATION · NO CAPTURES · NOBODY HERE CAN CONTACT YOU
@@ -146,12 +182,17 @@ const styles = StyleSheet.create({
   },
   tabOn: { backgroundColor: color.accent, borderColor: color.accent },
   tabText: { fontSize: 11, letterSpacing: 1.6, color: color.text },
-  rankBanner: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: space(3),
+  rankCard: { padding: space(4) },
+  rankRow: { flexDirection: 'row', alignItems: 'baseline', gap: space(2), marginTop: space(1) },
+  rankBig: {
+    fontFamily: font.numeral,
+    fontSize: 40,
+    color: color.accent,
+    fontVariant: ['tabular-nums'],
   },
+  rankOf: { fontSize: 12, letterSpacing: 1, color: color.dim },
+  rankXp: { fontSize: 11, letterSpacing: 1, color: color.dim, marginTop: 2 },
+  rankExplainer: { fontSize: 13, lineHeight: 19, color: color.dim, marginTop: space(2) },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -165,6 +206,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingHorizontal: space(3),
     borderBottomColor: 'transparent',
+    borderLeftWidth: 2,
+    borderLeftColor: color.accent,
   },
   rank: {
     fontFamily: font.monoSemi,
@@ -173,7 +216,12 @@ const styles = StyleSheet.create({
     width: 26,
   },
   name: { fontFamily: font.displayMed, fontSize: 15, color: color.text },
-  xp: { fontFamily: font.monoSemi, fontSize: 13, color: color.text },
+  xp: {
+    fontFamily: font.monoSemi,
+    fontSize: 13,
+    color: color.text,
+    fontVariant: ['tabular-nums'],
+  },
   footnote: {
     fontSize: 9,
     letterSpacing: 1.2,

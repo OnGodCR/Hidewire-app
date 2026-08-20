@@ -9,6 +9,7 @@ import {
   ViewStyle,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { REDUCED_MOTION } from '../theme';
 
 // Shared motion vocabulary. Entrance animations are one-shot and settle at
 // their final value, so a throttled frame loop degrades to "slightly offset"
@@ -130,6 +131,15 @@ export function CountUp({
   const [shown, setShown] = useState(value);
 
   useEffect(() => {
+    // A throttled web frame loop (hidden tab, background pane) freezes
+    // Animated.timing mid-flight, and a currency readout stuck on a stale
+    // balance is worse than one that does not animate. Money is never
+    // decorative: set it directly where motion is unreliable.
+    if (REDUCED_MOTION) {
+      anim.setValue(value);
+      setShown(value);
+      return;
+    }
     const id = anim.addListener(({ value: v }) => setShown(Math.round(v)));
     Animated.timing(anim, {
       toValue: value,

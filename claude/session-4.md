@@ -524,3 +524,116 @@ remains the first real test.
 - The hero has two phones again, the lobby in front and a live round behind.
 - "In development" in the header is now "Waitlist open".
 - "Cosmetic, one time, and never offered again" stays deleted; see 10.4.
+
+---
+
+## 16. The in-flight overlap, 2026-08-03
+
+Angad sent a screenshot of the scroller mid-transition on a tablet-width
+window: the step 06 copy drawn straight across the phone, text interleaved
+with the leaderboard screenshot. "Make sure all the UI components are solid
+enough that the scroll animation doesn't look interrupted."
+
+**Why every earlier check missed it:** all the clearance measurements in
+sections 11 and 14 were taken at the rest positions, where the copy has
+settled under the phone. The overlap only exists **in flight**, in the few
+hundred pixels where the outgoing copy is scrolling up through the stage while
+its fade-out is still running. A probe that samples quarter points between
+rest positions reproduces it immediately: up to 168 by 74 pixels of text over
+the device at 886 wide, and the same shape at 390. Rest-position checks are
+not transition checks.
+
+**The fix is paint order, not geometry.** On the narrow layout the stage now
+sits above the panels (`z-index: 3` inside the existing media block), so
+in-flight copy slides **behind** the device instead of over it. The phone
+bezel and screenshot are fully opaque, so the occlusion is total; the ambient
+layers ride above the copy too, but they are confined to the stage box and
+under 12 percent opacity. Desktop keeps the old order, because there the copy
+never crosses the phone at any width (re-measured at 1024, 1180, 1440 in
+flight, all clear).
+
+Verified by a probe that, at every overlap, asks `elementFromPoint` who is on
+top: **phone at every sample, all three widths.** Reduced motion still zero,
+twelve tests still passing.
+
+The reusable lesson, appended to 14's: measure transitions in flight, not just
+at rest. The screenshot that catches the bug is the one taken halfway between
+two stopping points.
+
+## 17. The exit collision: section 16's fix hid text instead of showing it
+
+Angad sent a second screenshot from the in-app browser: at the very end of the
+scroller, panel 06's copy sat **behind** the phone, unreadable, while the
+closing section arrived below. Not a transient this time, a frozen state.
+
+**The mechanics.** On the narrow layout the sticky stage is 52svh tall, so it
+stays pinned until the scroller's last 52svh. The copy un-sticks a full
+viewport earlier, when its panel's bottom reaches the viewport bottom. Between
+those two moments the copy climbs 48svh relative to the pinned phone. On a
+tall viewport that slack is absorbed by the gap; on a short one (the in-app
+browser is 2x DPR, so a 906 pixel panel is a 453 by 800 CSS viewport) the copy
+runs 120 to 125 pixels into the phone, and then the stage un-pins and both
+leave the page together with the collision frozen in place. Section 16's
+`z-index: 3` turned what used to be text-over-phone into phone-over-text:
+better in flight, worse at the exit, because now the text was simply gone.
+
+Desktop never shows this because its stage is 100svh tall: stage and last
+panel un-stick at the same scroll position and exit in lockstep.
+
+**The fix makes narrow match that timing without changing its look:**
+`margin-bottom: 48svh` on the narrow stage. Sticky pins until the **margin
+box** hits the containing block's end, so a 52svh box with a 48svh bottom
+margin has exactly desktop's sticky range. The visual box, the ambient
+layer's bounds, and the `::before` wash are all untouched because they key
+off the border box, not the margin box.
+
+**Two probe lessons on top of 16's:**
+
+- Section 16's probe sampled *between* panels but never *past* the last one.
+  The new `probe-exit.mjs` walks from the last panel's rest position to the
+  scroller's end in 60 pixel steps. The exit is a transition too.
+- The first run found nothing because it used the screenshot's pixel size.
+  The in-app browser is 2x DPR: 906 by 1660 device pixels is a **453 by 800
+  CSS viewport**, and the bug only exists at the CSS size. Reproduce at the
+  CSS viewport, not the screenshot dimensions.
+
+Verified after the fix: exit probe clean at 453x800, 453x820, 390x844,
+906x1660, 768x1024; mid-flight probe unchanged (in-flight passes still paint
+behind the phone, rest positions clean) at 453x800, 390x844, 906x1660;
+reduced motion still zero animations; twelve tests passing; em-dash grep
+clean; build 1238.7 KB.
+
+## 18. The entry collision: same bug, mirror image, other end of the scroller
+
+Third screenshot from Angad, same class of bug as section 17 but at the
+scroller's START: panel 01's heading and copy drawn under the descending
+phone as the section enters the viewport.
+
+**The mechanics, mirrored.** The copy blocks are sticky to the bottom band,
+so panel 01's copy pins to the viewport foot the moment its panel starts
+entering, while the stage is still riding up toward its own pinned position.
+For that whole stretch the phone descends directly over the pinned words.
+Every viewport height has this window; only its size varies.
+
+**The fix mirrors 17's:** `padding-top: 52svh` on `.panels` in the narrow
+media block. Holding the panels back by exactly the stage's height means no
+copy can reach the viewport until the phone has settled. The pinned reading
+positions do not move, because the bottom band already sat below 52svh at
+every height this layout serves. The exit lockstep from 17 is unaffected:
+the padding is at the top, so panel 06's bottom still coincides with the
+scroller's bottom.
+
+**A probe practice worth keeping:** the clean runs were validated with a
+negative control. `probe-entry-neg.mjs` re-runs the same probe with the fix
+stripped in-page (`padding-top: 0 !important`) and must FIND the overlap: it
+found 15 overlapping samples. A probe that has never seen the bug proves
+nothing by reporting clean.
+
+Verified: entry probe clean at 453x800, 390x844, 906x1660, 768x1024; exit
+probe still clean and mid-flight probe still paints phone-over-copy at
+453x800, 390x844, 906x1660; em-dash grep clean; build 1239.2 KB.
+
+The scroller now has all three regimes measured: entry (18), between steps
+(16), and exit (17). If a fourth screenshot arrives, the probes to reach for
+first are probe-entry, probe-mid, and probe-exit in the session scratchpad,
+each of which samples its regime in small steps rather than at rest points.

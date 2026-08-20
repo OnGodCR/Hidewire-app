@@ -188,9 +188,7 @@ export function Loadout() {
           })}
         </View>
 
-        <Mono style={styles.footnote}>
-          Cosmetics are visual only. Nothing here makes you easier or harder to find.
-        </Mono>
+        <Mono style={styles.footnote}>VISUAL ONLY. NOTHING HERE TOUCHES A ROUND.</Mono>
       </ScrollView>
     </View>
   );

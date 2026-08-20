@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -10,10 +11,23 @@ import {
 } from 'react-native';
 import Svg, { Rect } from 'react-native-svg';
 import { color, font, radius, space } from '../theme';
-import { Body, Btn, Label, Mono, Rule } from './ui';
-import { TickerEvent } from '../engine/GameContext';
+import { Body, Btn, Display, Label, Rule } from './ui';
+import {
+  CHECKIN_WINDOW,
+  ROUND_DISPLAY_MINUTES,
+  TickerEvent,
+} from '../engine/GameContext';
 
 // ---------- event ticker ----------
+
+/**
+ * The last three events, stacked newest-first and fading with age. Two-line
+ * cards rather than a single shouting strip: the category is the machine part
+ * (mono label, tinted), the sentence is the human part (Body, sentence case).
+ * Fully opaque on purpose, since map labels bleeding through a live event read
+ * as a glitch. The stack stays pinned; events only demote when newer ones land.
+ */
+const TICKER_OPACITY = [1, 0.55, 0.3];
 
 export function Ticker({ events }: { events: TickerEvent[] }) {
   const latest = events[0];
@@ -24,21 +38,39 @@ export function Ticker({ events }: { events: TickerEvent[] }) {
     Animated.timing(fade, { toValue: 1, duration: 250, useNativeDriver: true }).start();
   }, [latest?.id]);
   if (!latest) return null;
-  const tint =
-    latest.tone === 'danger'
-      ? color.danger
-      : latest.tone === 'warn'
-        ? color.warn
-        : latest.tone === 'accent'
-          ? color.accent
-          : color.dim;
+  const stack = events.slice(0, 3);
   return (
-    <Animated.View style={[styles.ticker, { opacity: fade }]}>
-      <View style={[styles.tickerBar, { backgroundColor: tint }]} />
-      <Text style={[styles.tickerText, { color: tint }]} numberOfLines={1}>
-        {latest.text.toUpperCase()}
-      </Text>
-    </Animated.View>
+    <View style={{ gap: space(1.5) }}>
+      {stack.map((e, i) => {
+        const tint =
+          e.tone === 'danger'
+            ? color.danger
+            : e.tone === 'warn'
+              ? color.warn
+              : e.tone === 'accent'
+                ? color.accent
+                : color.dim;
+        const card = (
+          <View style={styles.tickerCard}>
+            <Label size={11} style={{ color: tint }}>
+              {e.category}
+            </Label>
+            <Body numberOfLines={2} style={styles.tickerBody}>
+              {e.text}
+            </Body>
+          </View>
+        );
+        return i === 0 ? (
+          <Animated.View key={e.id} style={{ opacity: fade }}>
+            {card}
+          </Animated.View>
+        ) : (
+          <View key={e.id} style={{ opacity: TICKER_OPACITY[i] }}>
+            {card}
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -58,11 +90,13 @@ export function SosButton({ onLeave }: { onLeave: () => void }) {
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setOpen(false)}>
           <Pressable style={styles.sheet} onPress={() => {}}>
-            <Label tone="danger">Safety</Label>
-            <Body style={{ marginTop: space(2), marginBottom: space(4) }}>
+            <Display style={{ fontSize: 22 }}>Safety</Display>
+            <Body style={{ marginTop: space(2), marginBottom: space(4), color: color.dim }}>
               Leaving is always free. No XP penalty, no quitter flag. If something is
               wrong, stop playing.
             </Body>
+            <Btn title="Back to round" onPress={() => setOpen(false)} />
+            <View style={{ height: space(2) }} />
             <Btn
               title="Leave round"
               variant="ghost"
@@ -71,15 +105,18 @@ export function SosButton({ onLeave }: { onLeave: () => void }) {
                 onLeave();
               }}
             />
-            <View style={{ height: space(2) }} />
+            <Rule style={{ marginVertical: space(4) }} />
             <Btn
-              title="Emergency"
+              title="Call emergency services"
               variant="danger"
-              sub="opens your phone's emergency dialer"
-              onPress={() => setOpen(false)}
+              sub="opens your phone dialer"
+              onPress={() => {
+                // No number is hardcoded: the dialer opens and the player
+                // dials whatever their region uses. If the device cannot
+                // open a dialer, fail quietly rather than crashing mid-round.
+                Linking.openURL('tel:').catch(() => {});
+              }}
             />
-            <View style={{ height: space(2) }} />
-            <Btn title="Back to round" variant="outline" onPress={() => setOpen(false)} />
           </Pressable>
         </Pressable>
       </Modal>
@@ -130,16 +167,51 @@ function FakeQr({ size }: { size: number }) {
   );
 }
 
+/** One key-value line in the rules section of the explainer modal. */
+function ExplainerRule({ k, v }: { k: string; v: string }) {
+  return (
+    <View style={{ marginTop: space(3) }}>
+      <Text style={styles.ruleKey}>{k}</Text>
+      <Text style={styles.ruleBody}>{v}</Text>
+    </View>
+  );
+}
+
 export function ExplainerButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Pressable onPress={() => setOpen(true)} style={styles.explainerBtn} hitSlop={8}>
-        <Text style={styles.explainerBtnText}>?</Text>
+        <View style={styles.cardGlyph}>
+          <View style={styles.cardGlyphLine} />
+        </View>
+        <Label tone="text" size={10} style={{ marginTop: 3 }}>
+          Show a stranger
+        </Label>
       </Pressable>
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={styles.explainer}>
-          <ScrollView contentContainerStyle={{ padding: space(7), paddingTop: space(16) }}>
+          <ScrollView contentContainerStyle={{ padding: space(7), paddingTop: space(14) }}>
+            <Text style={styles.rulesHeading}>HOW THIS WORKS</Text>
+            <ExplainerRule
+              k="THE ROUND"
+              v={`${ROUND_DISPLAY_MINUTES} minutes on one clock. Hiders who outlast it win.`}
+            />
+            <ExplainerRule
+              k="CHECK-INS"
+              v={`Hiders prove where they are with a photo inside every ${CHECKIN_WINDOW} second window. Miss one and you are out.`}
+            />
+            <ExplainerRule
+              k="REVEALS"
+              v="Every reveal tick drops every hider's position on the seeker's map, then it fades."
+            />
+            <ExplainerRule
+              k="TAGS"
+              v="The seeker has to physically reach a hider. GPS alone never confirms a tag."
+            />
+
+            <View style={styles.rulesDivider} />
+
             <Text style={styles.explainerTitle}>I'm playing a mobile game called Hidewire.</Text>
             <Text style={styles.explainerBody}>
               It's an app-based game of hide and seek with friends.{'\n\n'}I'm not filming
@@ -178,27 +250,26 @@ export function InventoryDrawer({ role }: { role: 'hider' | 'seeker' }) {
   return (
     <>
       <Pressable onPress={() => setOpen(true)} style={styles.invBtn} hitSlop={8}>
-        <Label tone="text" style={{ fontSize: 9 }}>
+        <Label tone="text" size={12}>
           ITEMS
         </Label>
-        <Text style={styles.invCount}>{items.length}/2</Text>
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setOpen(false)}>
           <Pressable style={styles.sheet} onPress={() => {}}>
-            <Label>{`Inventory · ${role === 'hider' ? 'hider pool' : 'seeker pool'}`}</Label>
+            <Label size={12}>{`Item reference · ${role === 'hider' ? 'hider pool' : 'seeker pool'}`}</Label>
             {items.map((it, i) => (
               <View key={it.name}>
                 {i > 0 && <Rule style={{ marginVertical: space(3) }} />}
                 <View style={{ marginTop: i === 0 ? space(4) : 0 }}>
                   <Text style={styles.invName}>{it.name}</Text>
-                  <Mono style={{ marginTop: 2, fontSize: 12 }}>{it.desc}</Mono>
+                  <Body style={{ marginTop: 2, color: color.dim }}>{it.desc}</Body>
                 </View>
               </View>
             ))}
-            <Mono style={{ marginTop: space(4), fontSize: 11, color: color.faint }}>
-              Earned through play only. Never purchasable. 90 s cooldown between uses.
-            </Mono>
+            <Body style={{ marginTop: space(4), color: color.faint }}>
+              Earned through play only. Never purchasable. 90 second cooldown between uses.
+            </Body>
             <View style={{ height: space(3) }} />
             <Btn title="Close" variant="outline" onPress={() => setOpen(false)} />
           </Pressable>
@@ -209,23 +280,16 @@ export function InventoryDrawer({ role }: { role: 'hider' | 'seeker' }) {
 }
 
 const styles = StyleSheet.create({
-  ticker: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(10,10,12,0.92)',
+  tickerCard: {
+    backgroundColor: color.surface,
     borderWidth: 1,
-    borderColor: color.line,
+    borderColor: color.lineBright,
     borderRadius: radius.sm,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    gap: 8,
+    paddingVertical: space(2),
+    paddingHorizontal: space(3),
   },
-  tickerBar: { width: 3, alignSelf: 'stretch', borderRadius: 2 },
-  tickerText: {
-    fontFamily: font.monoMed,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    flex: 1,
+  tickerBody: {
+    marginTop: 1,
   },
   sos: {
     width: 54,
@@ -258,21 +322,56 @@ const styles = StyleSheet.create({
     paddingBottom: space(10),
   },
   explainerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    minHeight: 44,
+    paddingHorizontal: space(2.5),
+    paddingVertical: space(1.5),
+    borderRadius: radius.md,
     backgroundColor: color.surface2,
     borderWidth: 1,
     borderColor: color.lineBright,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  explainerBtnText: {
-    fontFamily: font.monoSemi,
-    fontSize: 16,
-    color: color.text,
+  cardGlyph: {
+    width: 22,
+    height: 15,
+    borderWidth: 1.5,
+    borderColor: color.text,
+    borderRadius: 3,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 3,
+    paddingBottom: 2,
+  },
+  cardGlyphLine: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: color.text,
   },
   explainer: { flex: 1, backgroundColor: '#FFFFFF' },
+  rulesHeading: {
+    fontFamily: font.monoSemi,
+    fontSize: 12,
+    letterSpacing: 1.6,
+    color: '#000',
+  },
+  ruleKey: {
+    fontFamily: font.monoMed,
+    fontSize: 11,
+    letterSpacing: 1.4,
+    color: '#666',
+  },
+  ruleBody: {
+    fontFamily: font.displayMed,
+    fontSize: 15,
+    lineHeight: 21,
+    color: '#111',
+    marginTop: 2,
+  },
+  rulesDivider: {
+    height: 1,
+    backgroundColor: '#DDD',
+    marginVertical: space(6),
+  },
   explainerTitle: {
     fontFamily: font.display,
     fontSize: 30,
@@ -309,12 +408,6 @@ const styles = StyleSheet.create({
     height: 54,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  invCount: {
-    fontFamily: font.monoSemi,
-    fontSize: 13,
-    color: color.accent,
-    marginTop: 2,
   },
   invName: {
     fontFamily: font.monoSemi,
